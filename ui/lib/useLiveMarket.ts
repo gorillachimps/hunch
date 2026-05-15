@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { polymarketMarketWs, type WsStatus } from "./polymarketWs";
+import { CLOB_HOST } from "./polymarket";
 
 /**
  * Public React hooks over the Polymarket market-data WS singleton.
@@ -89,7 +90,40 @@ function midFromBook(book: LiveBook | null): number | null {
   return null;
 }
 
-/** Live, mutable order book for a single token. Null while loading. */
+function bookFromBidsAsks(
+  bids: Level[],
+  asks: Level[],
+  timestamp: string | undefined,
+  version: number,
+): LiveBook {
+  const bidMap = new Map<string, string>();
+  const askMap = new Map<string, string>();
+  for (const l of bids) if (l?.price) bidMap.set(l.price, l.size);
+  for (const l of asks) if (l?.price) askMap.set(l.price, l.size);
+  return {
+    bids: sortBids(bidMap),
+    asks: sortAsks(askMap),
+    timestamp,
+    version,
+  };
+}
+
+/**
+ * Live, mutable order book for a single token. Null while loading.
+ *
+ * Hybrid load strategy: an HTTP `/book` request gives us the initial snapshot
+ * synchronously (well, on the next tick) regardless of how the WS server
+ * decides to handle our subscribe message. The WS then layers `price_change`
+ * deltas on top. If the WS server ALSO delivers a `book` snapshot we just
+ * accept it — the new one wins (with the version reset).
+ *
+ * This belt-and-braces approach exists because Polymarket's WS doesn't
+ * reliably re-deliver a `book` snapshot when a new asset is added via a
+ * subsequent subscribe message on an open connection (the first asset works,
+ * subsequent ones don't always). Without the HTTP fallback, toggling the
+ * order book between YES and NO leaves the second side stuck on a loading
+ * spinner forever.
+ */
 export function useLiveBook(tokenId: string | null | undefined): LiveBook | null {
   const [book, setBook] = useState<LiveBook | null>(null);
   useEffect(() => {
@@ -97,30 +131,51 @@ export function useLiveBook(tokenId: string | null | undefined): LiveBook | null
       setBook(null);
       return;
     }
-    setBook(null); // reset when tokenId changes
+    setBook(null);
+    let cancelled = false;
+
+    // 1. HTTP snapshot for instant render. Survives WS server quirks.
+    fetch(`${CLOB_HOST}/book?token_id=${encodeURIComponent(tokenId)}`, {
+      cache: "no-store",
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { bids?: Level[]; asks?: Level[]; timestamp?: string }) => {
+        if (cancelled) return;
+        // Only seed if we haven't already got a fresher book from the WS.
+        setBook((prev) =>
+          prev != null
+            ? prev
+            : bookFromBidsAsks(data.bids ?? [], data.asks ?? [], data.timestamp, 0),
+        );
+      })
+      .catch(() => {
+        // Network glitch — the WS book event (if/when it comes) will fill in.
+      });
+
+    // 2. WS for live deltas + any server-delivered book snapshots.
     const unsub = polymarketMarketWs.subscribe([tokenId], {
       onBook: (e) => {
-        const bids = (e.bids as Level[] | undefined) ?? [];
-        const asks = (e.asks as Level[] | undefined) ?? [];
-        // Re-sort defensively — the snapshot from /book is already sorted but
-        // a stale or partial snapshot could trip the rest of the pipeline.
-        const bidMap = new Map<string, string>();
-        const askMap = new Map<string, string>();
-        for (const l of bids) if (l?.price) bidMap.set(l.price, l.size);
-        for (const l of asks) if (l?.price) askMap.set(l.price, l.size);
-        setBook({
-          bids: sortBids(bidMap),
-          asks: sortAsks(askMap),
-          timestamp: e.timestamp as string | undefined,
-          version: 0,
-        });
+        if (cancelled) return;
+        setBook(
+          bookFromBidsAsks(
+            (e.bids as Level[] | undefined) ?? [],
+            (e.asks as Level[] | undefined) ?? [],
+            e.timestamp as string | undefined,
+            0,
+          ),
+        );
       },
       onPriceChange: (e) => {
+        if (cancelled) return;
         const changes = (e.changes as RawChange[] | undefined) ?? [];
         setBook((prev) => (prev ? applyPriceChanges(prev, changes) : prev));
       },
     });
-    return unsub;
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [tokenId]);
   return book;
 }
