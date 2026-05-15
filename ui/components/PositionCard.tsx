@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Wallet } from "lucide-react";
 import { useClobSession } from "@/lib/useClobSession";
 import { getBalanceAllowance } from "@/lib/polymarket";
+import { useLiveMid } from "@/lib/useLiveMarket";
 import { cn } from "@/lib/cn";
 import type { TableRow } from "@/lib/types";
 import { OrderTicket } from "./OrderTicket";
@@ -36,6 +37,7 @@ function fmtUSD(n: number): string {
 
 export function PositionCard({ market }: { market: TableRow }) {
   const session = useClobSession();
+  const liveYesMid = useLiveMid(market.tokenYes);
   const [holdings, setHoldings] = useState<Holdings | null>(null);
   const [loading, setLoading] = useState(false);
   const [sellOutcome, setSellOutcome] = useState<"yes" | "no" | null>(null);
@@ -106,7 +108,9 @@ export function PositionCard({ market }: { market: TableRow }) {
     );
   }
 
-  const implied = market.impliedYes ?? 0.5;
+  // Prefer the live mid from the WS feed; fall back to the snapshot value
+  // when the WS hasn't returned a book yet (first ~200ms after mount).
+  const implied = liveYesMid ?? market.impliedYes ?? 0.5;
   const yesValue = holdings.yes * implied;
   const noValue = holdings.no * (1 - implied);
   const totalValue = yesValue + noValue;

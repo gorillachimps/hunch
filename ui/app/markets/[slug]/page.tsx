@@ -8,6 +8,7 @@ import { RcBar } from "@/components/RcBar";
 import { Sparkline } from "@/components/Sparkline";
 import { PositionCard } from "@/components/PositionCard";
 import { OrderBookView } from "@/components/OrderBookView";
+import { LivePmImpliedStat } from "@/components/LivePmImpliedStat";
 import { cn } from "@/lib/cn";
 import { getMarketBySlug } from "@/lib/data";
 import {
@@ -99,14 +100,11 @@ export default async function MarketDetailPage({ params }: Props) {
           </h1>
 
           <div className="mt-6 grid gap-3 sm:grid-cols-4">
-            <BigStat
-              label="PM implied"
-              value={fmtImpliedPct(row.impliedYes)}
-              hint={
-                row.bestBid != null && row.bestAsk != null
-                  ? `bid ${fmtImpliedPct(row.bestBid)} / ask ${fmtImpliedPct(row.bestAsk)}`
-                  : undefined
-              }
+            <LivePmImpliedStat
+              tokenYes={row.tokenYes ?? null}
+              bestBid={row.bestBid ?? null}
+              bestAsk={row.bestAsk ?? null}
+              fallbackImpliedYes={row.impliedYes}
             />
             <BigStat
               label="Current state"

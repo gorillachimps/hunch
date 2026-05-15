@@ -12,7 +12,15 @@ import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { OrderTicket } from "./OrderTicket";
 import { SUBTYPE_CHIPS } from "@/lib/families";
 import { useStarred } from "@/lib/useStarred";
+import { useLiveMidMap } from "@/lib/useLiveMarket";
 import type { Family, TableRow } from "@/lib/types";
+
+// Maximum number of YES tokens to live-subscribe to via the Polymarket WS.
+// Picked from the top of the *unfiltered* set by 24h volume so subscriptions
+// are stable across filter/sort interactions. Anything beyond this still
+// shows the 60s-snapshot mid — good enough for the long-tail markets the
+// user isn't actively watching.
+const LIVE_SUBSCRIBE_TOP_N = 50;
 
 const FAMILY_VALUES = SUBTYPE_CHIPS.map((c) => c.family);
 const familyParser = parseAsStringLiteral(FAMILY_VALUES).withDefault("all");
@@ -62,6 +70,27 @@ export function Screener({ rows }: Props) {
     [rows],
   );
 
+  // Subscribe to live mids for the top-volume YES tokens; merge them into
+  // each row's `impliedYes` field. The downstream MarketTable / MobileList
+  // stay oblivious — they see a regular TableRow with possibly-live values.
+  const topTokenIds = useMemo(() => {
+    return [...rows]
+      .filter((r): r is TableRow & { tokenYes: string } => Boolean(r.tokenYes))
+      .sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0))
+      .slice(0, LIVE_SUBSCRIBE_TOP_N)
+      .map((r) => r.tokenYes);
+  }, [rows]);
+  const liveMids = useLiveMidMap(topTokenIds);
+  const rowsWithLive = useMemo(() => {
+    if (liveMids.size === 0) return rows;
+    return rows.map((r) => {
+      if (!r.tokenYes) return r;
+      const mid = liveMids.get(r.tokenYes);
+      if (mid == null) return r;
+      return { ...r, impliedYes: mid };
+    });
+  }, [rows, liveMids]);
+
   const sorting = useMemo(() => parseSort(sortParam), [sortParam]);
   const setSorting = (next: SortingState) => {
     setSortParam(serializeSort(next), { shallow: true });
@@ -71,7 +100,7 @@ export function Screener({ rows }: Props) {
   useEffect(() => {
     function onFocus(ev: Event) {
       const id = (ev as CustomEvent<string>).detail;
-      const target = rows.find((r) => r.id === id);
+      const target = rowsWithLive.find((r) => r.id === id);
       if (!target) return;
       if (active !== "all" && target.family !== active) {
         setActive(null, { shallow: true });
@@ -83,21 +112,21 @@ export function Screener({ rows }: Props) {
     }
     window.addEventListener("hunch:focus-market", onFocus);
     return () => window.removeEventListener("hunch:focus-market", onFocus);
-  }, [rows, active, search, ticker, isStarredOn, starred, isLiveOn, setActive, setSearch, setTicker, setStarredFlag, setLiveFlag]);
+  }, [rowsWithLive, active, search, ticker, isStarredOn, starred, isLiveOn, setActive, setSearch, setTicker, setStarredFlag, setLiveFlag]);
 
   const counts = useMemo(() => {
-    const c: Partial<Record<Family | "all", number>> = { all: rows.length };
-    for (const r of rows) {
+    const c: Partial<Record<Family | "all", number>> = { all: rowsWithLive.length };
+    for (const r of rowsWithLive) {
       c[r.family] = (c[r.family] ?? 0) + 1;
     }
     return c;
-  }, [rows]);
+  }, [rowsWithLive]);
 
   // Discover available tickers from binance_price markets so the chip row reflects
   // what actually exists rather than a hardcoded list.
   const tickerOptions = useMemo(() => {
     const tally = new Map<string, number>();
-    for (const r of rows) {
+    for (const r of rowsWithLive) {
       if (r.family !== "binance_price") continue;
       const t = r.symbol;
       if (!t) continue;
@@ -107,11 +136,11 @@ export function Screener({ rows }: Props) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
       .map(([t, n]) => ({ ticker: t, count: n }));
-  }, [rows]);
+  }, [rowsWithLive]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    return rowsWithLive.filter((r) => {
       if (active !== "all" && r.family !== active) return false;
       if (ticker && r.symbol !== ticker) return false;
       if (isStarredOn && !starred.has(r.id)) return false;
@@ -119,7 +148,7 @@ export function Screener({ rows }: Props) {
       if (q && !r.question.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, active, ticker, isStarredOn, starred, isLiveOn, search]);
+  }, [rowsWithLive, active, ticker, isStarredOn, starred, isLiveOn, search]);
 
   const showTickerRow = (active === "all" || active === "binance_price") && tickerOptions.length > 0;
 
@@ -138,13 +167,13 @@ export function Screener({ rows }: Props) {
   useEffect(() => {
     function onOpen(ev: Event) {
       const detail = (ev as CustomEvent<{ id: string; outcome: "yes" | "no" }>).detail;
-      const market = rows.find((r) => r.id === detail.id);
+      const market = rowsWithLive.find((r) => r.id === detail.id);
       if (!market) return;
       setTicket({ market, outcome: detail.outcome });
     }
     window.addEventListener("hunch:open-ticket", onOpen);
     return () => window.removeEventListener("hunch:open-ticket", onOpen);
-  }, [rows]);
+  }, [rowsWithLive]);
 
   const resetAll = useCallback(() => {
     setActive(null, { shallow: true });
