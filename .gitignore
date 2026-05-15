@@ -35,3 +35,6 @@ ui/.env.*.local
 .idea/
 .vscode/
 *.swp
+
+# Local-only scratch for the logo crop tool
+scripts/_probe/

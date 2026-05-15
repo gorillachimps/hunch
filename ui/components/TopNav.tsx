@@ -1,4 +1,3 @@
-import { Sparkles } from "lucide-react";
 import { ConnectButton } from "./ConnectButton";
 import { HowItWorks } from "./HowItWorks";
 
@@ -26,9 +25,14 @@ export function TopNav({ active = "screener" }: Props) {
     <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
       <div className="mx-auto flex h-12 max-w-[1480px] items-center gap-3 px-3 sm:gap-6 sm:px-4">
         <a href="/" className="flex shrink-0 items-center gap-2 text-sm font-semibold tracking-tight">
-          <span className="grid h-6 w-6 place-items-center rounded-md bg-accent/15 text-accent ring-1 ring-accent/30">
-            <Sparkles className="h-3.5 w-3.5" />
-          </span>
+          <img
+            src="/logo.png"
+            alt=""
+            width={28}
+            height={28}
+            className="h-7 w-7 shrink-0 select-none"
+            draggable={false}
+          />
           <span className="text-foreground">Hunch</span>
           <span className="ml-1 hidden rounded-full bg-zinc-800/80 px-1.5 py-px text-[10px] font-medium uppercase tracking-wider text-muted ring-1 ring-border sm:inline-block">
             beta
