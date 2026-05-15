@@ -3,6 +3,7 @@ import { TopNav } from "@/components/TopNav";
 import { Footer } from "@/components/Footer";
 import { ApprovalBanner } from "@/components/ApprovalBanner";
 import { PortfolioView } from "@/components/PortfolioView";
+import { TotalBalance } from "@/components/TotalBalance";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ export default function PortfolioPage() {
             Open positions for your deposit wallet, valued at the current mid
             price. Refreshed every 30 s.
           </p>
+          <TotalBalance />
           <PortfolioView />
         </div>
       </main>
