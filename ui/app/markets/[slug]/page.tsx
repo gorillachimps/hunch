@@ -7,6 +7,7 @@ import { DeltaBar } from "@/components/DeltaBar";
 import { RcBar } from "@/components/RcBar";
 import { Sparkline } from "@/components/Sparkline";
 import { PositionCard } from "@/components/PositionCard";
+import { OrderBookView } from "@/components/OrderBookView";
 import { cn } from "@/lib/cn";
 import { getMarketBySlug } from "@/lib/data";
 import {
@@ -162,6 +163,13 @@ export default async function MarketDetailPage({ params }: Props) {
 
           <div className="mt-6">
             <PositionCard market={row} />
+          </div>
+
+          <div className="mt-6">
+            <OrderBookView
+              tokenYes={row.tokenYes ?? null}
+              tokenNo={row.tokenNo ?? null}
+            />
           </div>
 
           <Card className="mt-6" title="Rule">

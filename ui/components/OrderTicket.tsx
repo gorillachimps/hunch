@@ -12,11 +12,19 @@ import { cn } from "@/lib/cn";
 import type { TableRow } from "@/lib/types";
 
 type Outcome = "yes" | "no";
+type SideMode = "buy" | "sell";
 
 type Props = {
   open: boolean;
   market: TableRow | null;
   initialOutcome: Outcome;
+  /** Defaults to "buy". When "sell", the size input is in SHARES (not USD), the
+   *  allowance check uses the conditional-token balance for the chosen outcome,
+   *  and the submit posts a SELL order. */
+  side?: SideMode;
+  /** When set, pre-fills size in SELL mode and caps the Max button. The user
+   *  can still type a smaller value. */
+  maxShares?: number;
   onClose: () => void;
 };
 
@@ -30,11 +38,19 @@ function tickToString(t: number | null): TickStr {
   return (TICK_SIZES.includes(s as TickStr) ? s : "0.01") as TickStr;
 }
 
-export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
+export function OrderTicket({ open, market, initialOutcome, side = "buy", maxShares, onClose }: Props) {
   const session = useClobSession();
-  const allowance = useBalanceAllowance(session.client);
-
   const [outcome, setOutcome] = useState<Outcome>(initialOutcome);
+  // For SELL we want the allowance of the *outcome token*; for BUY we want
+  // the collateral (pUSD) allowance. Pick based on mode and selected outcome.
+  const allowanceTokenId =
+    side === "sell"
+      ? outcome === "yes"
+        ? market?.tokenYes ?? undefined
+        : market?.tokenNo ?? undefined
+      : undefined;
+  const allowance = useBalanceAllowance(session.client, allowanceTokenId);
+
   const [priceStr, setPriceStr] = useState("");
   const [sizeStr, setSizeStr] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -103,11 +119,19 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
   const tickNumeric = parseFloat(tickSize);
 
   const price = parseFloat(priceStr);
-  const sizeUsd = parseFloat(sizeStr);
+  const sizeInput = parseFloat(sizeStr);
+  // BUY: user types USD, we derive shares.
+  // SELL: user types shares, we derive USD notional.
   const sharesNumeric =
-    isFinite(price) && price > 0 && isFinite(sizeUsd) && sizeUsd > 0
-      ? sizeUsd / price
-      : 0;
+    side === "buy"
+      ? isFinite(price) && price > 0 && isFinite(sizeInput) && sizeInput > 0
+        ? sizeInput / price
+        : 0
+      : isFinite(sizeInput) && sizeInput > 0
+        ? sizeInput
+        : 0;
+  const notionalUsd =
+    isFinite(price) && price > 0 ? sharesNumeric * price : 0;
 
   const errors = useMemo(() => {
     const list: string[] = [];
@@ -120,14 +144,35 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
         list.push(`Price must be a multiple of ${tickSize}.`);
       }
     }
-    if (!isFinite(sizeUsd) || sizeUsd <= 0) {
-      list.push("Size must be > $0.");
-    } else if (sizeUsd < 1) {
-      // Polymarket's typical minimum
-      list.push("Polymarket minimum order is $1.");
+    if (side === "buy") {
+      if (!isFinite(sizeInput) || sizeInput <= 0) {
+        list.push("Size must be > $0.");
+      } else if (sizeInput < 1) {
+        list.push("Polymarket minimum order is $1.");
+      } else if (notionalUsd < 1) {
+        // Catches the rounding case: $1 typed but shares × price < $1 once
+        // the SDK rounds (e.g. $1 @ 0.99 → 1.01 shares × 0.99 = $0.9999).
+        list.push(
+          "Resulting notional is under $1 after share rounding — bump size by a cent or two.",
+        );
+      }
+    } else {
+      // SELL — size is in shares.
+      if (!isFinite(sizeInput) || sizeInput <= 0) {
+        list.push("Size must be > 0 shares.");
+      } else if (notionalUsd < 1) {
+        list.push(
+          `Resulting notional is $${notionalUsd.toFixed(4)} — Polymarket minimum is $1. Increase shares or price.`,
+        );
+      }
+      if (maxShares != null && sizeInput > maxShares + 1e-6) {
+        list.push(
+          `You only hold ${maxShares.toFixed(2)} ${outcome.toUpperCase()} shares.`,
+        );
+      }
     }
     return list;
-  }, [price, sizeUsd, tickNumeric, tickSize]);
+  }, [price, sizeInput, tickNumeric, tickSize, side, maxShares, notionalUsd, outcome]);
 
   if (!open || !market) return null;
 
@@ -142,8 +187,9 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
   async function submit() {
     if (!session.client || !tokenId || !market) return;
     setSubmitting(true);
+    const verb = side === "buy" ? "BUY" : "SELL";
     const toastId = toast.loading(
-      `Placing ${outcome.toUpperCase()} order at ${priceStr}…`,
+      `Placing ${verb} ${outcome.toUpperCase()} order at ${priceStr}…`,
     );
     try {
       const resp = await placeLimitOrder({
@@ -151,7 +197,7 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
         tokenID: tokenId,
         price,
         size: sharesNumeric,
-        side: Side.BUY,
+        side: side === "buy" ? Side.BUY : Side.SELL,
         tickSize,
         negRisk: market.negRisk,
       });
@@ -160,14 +206,15 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
         throw new Error(resp.errorMsg || "order rejected");
       }
       toast.success(
-        `${outcome.toUpperCase()} order placed (${sharesNumeric.toFixed(2)} shares @ $${priceStr})`,
+        `${verb} ${outcome.toUpperCase()} placed (${sharesNumeric.toFixed(2)} shares @ $${priceStr})`,
         { id: toastId, duration: 6000 },
       );
       track("order_placed", {
         outcome,
+        side,
         slug: market.slug,
         family: market.family,
-        size_usd: sizeUsd,
+        size_usd: notionalUsd,
         price,
       });
       allowance.refresh();
@@ -177,6 +224,7 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
       toast.error(`Order failed: ${msg}`, { id: toastId, duration: 8000 });
       track("order_failed", {
         outcome,
+        side,
         slug: market.slug,
         family: market.family,
         reason: msg.slice(0, 80),
@@ -209,20 +257,34 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
     if (session.status !== "ready") return null;
     if (allowance.loading || allowance.error) return null;
     if (!allowance.hasAnyAllowance) {
-      return "Deposit-wallet allowance is 0 — approve at polymarket.com first.";
+      return side === "buy"
+        ? "Deposit-wallet allowance is 0 — approve at polymarket.com first."
+        : "Outcome-token allowance is 0 — approve at polymarket.com first.";
     }
-    // Guard against the user not having typed a size yet: parseFloat("") is
-    // NaN, and BigInt(NaN) throws synchronously during render. Treat unknown
-    // size as the $1 minimum so the check still does something useful.
-    const sizeForCheck =
-      Number.isFinite(sizeUsd) && sizeUsd > 0
-        ? Math.max(1, Math.ceil(sizeUsd))
-        : 1;
-    if (
-      allowance.balance != null &&
-      allowance.balance < BigInt(sizeForCheck * 1_000_000)
-    ) {
-      return `Insufficient pUSD balance (${fmtCollateral(allowance.balance)}).`;
+    if (side === "buy") {
+      // Guard against NaN: parseFloat("") is NaN, BigInt(NaN) would throw.
+      // Treat unknown size as the $1 minimum so the check still does something.
+      const sizeForCheck =
+        Number.isFinite(sizeInput) && sizeInput > 0
+          ? Math.max(1, Math.ceil(sizeInput))
+          : 1;
+      if (
+        allowance.balance != null &&
+        allowance.balance < BigInt(sizeForCheck * 1_000_000)
+      ) {
+        return `Insufficient pUSD balance (${fmtCollateral(allowance.balance)}).`;
+      }
+    } else {
+      // SELL: allowance.balance is in conditional-token units (6 decimals).
+      // sharesNumeric × 1e6 must fit within the held balance.
+      if (
+        allowance.balance != null &&
+        sharesNumeric > 0 &&
+        allowance.balance < BigInt(Math.ceil(sharesNumeric * 1_000_000))
+      ) {
+        const heldShares = Number(allowance.balance) / 1_000_000;
+        return `Only ${heldShares.toFixed(2)} ${outcome.toUpperCase()} shares available to sell.`;
+      }
     }
     return null;
   })();
@@ -246,7 +308,7 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h2 id="order-ticket-title" className="text-base font-semibold tracking-tight">
-              Place order
+              {side === "buy" ? "Place order" : "Sell shares"}
             </h2>
             <p className="mt-1 line-clamp-2 text-[12px] text-muted">
               {market.question}
@@ -292,14 +354,22 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
             placeholder="0.50"
             inputMode="decimal"
           />
-          <Input
-            label="Size (USD)"
-            value={sizeStr}
-            onChange={setSizeStr}
-            prefix="$"
-            placeholder="5.00"
-            inputMode="decimal"
-          />
+          {side === "buy" ? (
+            <Input
+              label="Size (USD)"
+              value={sizeStr}
+              onChange={setSizeStr}
+              prefix="$"
+              placeholder="5.00"
+              inputMode="decimal"
+            />
+          ) : (
+            <SellSizeInput
+              value={sizeStr}
+              onChange={setSizeStr}
+              maxShares={maxShares}
+            />
+          )}
         </div>
 
         <PriceQuickRow
@@ -310,11 +380,33 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
         />
 
         <div className="mt-3 grid grid-cols-2 gap-3 text-[12px] text-muted">
-          <Field label="Shares" value={sharesNumeric > 0 ? sharesNumeric.toFixed(2) : "—"} />
-          <Field
-            label="pUSD balance"
-            value={fmtCollateral(allowance.balance)}
-          />
+          {side === "buy" ? (
+            <>
+              <Field
+                label="Shares"
+                value={sharesNumeric > 0 ? sharesNumeric.toFixed(2) : "—"}
+              />
+              <Field
+                label="pUSD balance"
+                value={fmtCollateral(allowance.balance)}
+              />
+            </>
+          ) : (
+            <>
+              <Field
+                label="Receive (notional)"
+                value={notionalUsd > 0 ? `$${notionalUsd.toFixed(notionalUsd >= 1 ? 2 : 4)}` : "—"}
+              />
+              <Field
+                label={`${outcome.toUpperCase()} shares held`}
+                value={
+                  allowance.balance != null
+                    ? (Number(allowance.balance) / 1_000_000).toFixed(2)
+                    : "—"
+                }
+              />
+            </>
+          )}
         </div>
 
         {errors.length > 0 ? (
@@ -365,7 +457,9 @@ export function OrderTicket({ open, market, initialOutcome, onClose }: Props) {
             {submitting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
             ) : null}
-            {submitting ? "Placing…" : `Buy ${outcome.toUpperCase()}`}
+            {submitting
+              ? "Placing…"
+              : `${side === "buy" ? "Buy" : "Sell"} ${outcome.toUpperCase()}`}
           </button>
         </div>
       </div>
@@ -453,6 +547,47 @@ function Input({
             {suffix}
           </span>
         ) : null}
+      </span>
+    </label>
+  );
+}
+
+function SellSizeInput({
+  value,
+  onChange,
+  maxShares,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  maxShares?: number;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-2">
+        <span>Size (shares)</span>
+        {maxShares != null && maxShares > 0 ? (
+          <button
+            type="button"
+            onClick={() => onChange(maxShares.toFixed(2))}
+            className="rounded bg-surface-2 px-1.5 py-0 text-[10px] font-semibold text-accent hover:bg-accent/15"
+            title={`Sell all ${maxShares.toFixed(2)} held`}
+          >
+            Max {maxShares.toFixed(2)}
+          </button>
+        ) : null}
+      </span>
+      <span className="relative">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="0.00"
+          inputMode="decimal"
+          spellCheck={false}
+          autoComplete="off"
+          className={cn(
+            "w-full rounded-md border border-border-strong bg-background py-1.5 pl-3 pr-3 font-mono text-[13px] text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-accent/40",
+          )}
+        />
       </span>
     </label>
   );
