@@ -1,0 +1,61 @@
+name: data-rebuild
+
+# Full rebuild of the Phase 0 pipeline:
+#   1. dump_crypto_events.py — page through Gamma API, fetch all crypto events
+#   2. parse_rules.py        — structure rules text into families
+#   3. enrich_state.py       — query Binance for live prices, compute RC
+#
+# Heavy: ~5 minutes. Runs every 6 hours to pick up new markets. The
+# 15-minute data-refresh workflow handles price-only updates between rebuilds.
+
+on:
+  schedule:
+    - cron: "7 */6 * * *" # offset from data-refresh to avoid contention
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-rebuild
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pipeline deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv
+
+      - name: dump_crypto_events
+        run: python dump_crypto_events.py
+
+      - name: parse_rules
+        run: python parse_rules.py
+
+      - name: enrich_state
+        run: python enrich_state.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "hunch-bot"
+          git config user.email "hunch-bot@users.noreply.github.com"
+          # Stage all three artefacts — any may have changed.
+          git add data/crypto-events.json data/parsed-markets.json data/enriched-markets.json
+          if git diff --cached --quiet; then
+            echo "No changes — exiting clean."
+            exit 0
+          fi
+          git commit -m "data: full rebuild ($(date -u +%Y-%m-%d\ %H:%MZ))"
+          git push

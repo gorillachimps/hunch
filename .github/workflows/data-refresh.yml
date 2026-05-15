@@ -1,0 +1,52 @@
+name: data-refresh
+
+# Re-runs the price-enrichment step (~1s) so the snapshot age stays under the
+# /api/health 6-hour staleness threshold. Cheap; runs every 15 minutes.
+#
+# To rebuild the full dataset (pick up new markets), see data-rebuild.yml.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {} # manual trigger from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pipeline deps
+        run: |
+          python -m pip install --upgrade pip
+          # Only what enrich_state.py needs — no SDK, no signing.
+          pip install requests python-dotenv
+
+      - name: Run enrich_state.py
+        run: python enrich_state.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "hunch-bot"
+          git config user.email "hunch-bot@users.noreply.github.com"
+          if git diff --quiet data/enriched-markets.json; then
+            echo "No changes — exiting clean."
+            exit 0
+          fi
+          git add data/enriched-markets.json
+          git commit -m "data: refresh enriched snapshot ($(date -u +%H:%MZ))"
+          git push

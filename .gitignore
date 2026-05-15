@@ -1,0 +1,37 @@
+# macOS noise
+.DS_Store
+
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Python pipeline
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.python-version
+
+# Vercel local link metadata (per-machine, contains project IDs)
+.vercel/
+
+# Next.js / node working dirs inside ui/
+ui/node_modules/
+ui/.next/
+ui/out/
+ui/build/
+ui/coverage/
+ui/*.tsbuildinfo
+ui/next-env.d.ts
+
+# Stale ui/ env scaffolding (ui/.gitignore also covers these, but be explicit)
+ui/.env
+ui/.env.local
+ui/.env.*.local
+
+# IDE / editor scratch
+.idea/
+.vscode/
+*.swp
