@@ -69,7 +69,12 @@ export async function GET(req: NextRequest) {
 
   const eoaTopic = `0x${eoa.slice(2).toLowerCase().padStart(64, "0")}`;
 
-  const url = new URL("https://api.polygonscan.com/api");
+  // Etherscan V2 multi-chain endpoint. Polygonscan's V1 endpoint
+  // (api.polygonscan.com/api) is deprecated as of 2024 — Etherscan unified
+  // every chain under api.etherscan.io/v2 with a `chainid` parameter. The
+  // same API key works for every chain in their network.
+  const url = new URL("https://api.etherscan.io/v2/api");
+  url.searchParams.set("chainid", "137"); // Polygon mainnet
   url.searchParams.set("module", "logs");
   url.searchParams.set("action", "getLogs");
   url.searchParams.set("fromBlock", FROM_BLOCK);
@@ -78,6 +83,7 @@ export async function GET(req: NextRequest) {
   url.searchParams.set("topic1", ZERO_TOPIC);
   url.searchParams.set("topic2", eoaTopic);
   url.searchParams.set("topic0_1_opr", "and");
+  url.searchParams.set("topic0_2_opr", "and");
   url.searchParams.set("topic1_2_opr", "and");
   url.searchParams.set("apikey", apiKey);
 
