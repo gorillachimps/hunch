@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Builder · Hunch",
   description:
-    "Live attribution data for the Hunch builder code (SombreroStepover) on Polymarket V2.",
+    "Live attribution data for the Hunch builder code on Polymarket V2.",
 };
 
 export default function BuilderPage() {
@@ -22,9 +22,8 @@ export default function BuilderPage() {
             Builder attribution
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-muted">
-            Every order placed through this site carries the{" "}
-            <strong className="text-foreground">SombreroStepover</strong> builder
-            code on Polymarket V2. This page reads the raw{" "}
+            Operator dashboard for the Hunch builder code on Polymarket V2.
+            This page reads the raw{" "}
             <code className="font-mono text-[11px]">/builder/trades</code>{" "}
             endpoint and shows attributed fills as they land — refreshed every
             60 s.

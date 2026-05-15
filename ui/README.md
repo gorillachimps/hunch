@@ -1,11 +1,10 @@
 # Hunch · UI
 
 Next.js 16 app for the Hunch crypto-bet screener (Polymarket-backed under the
-hood, builder-code-attributed via SombreroStepover). Reads from the Phase 0
-data pipeline at `../data/enriched-markets.json` and surfaces it as a sortable
-table with Δ-to-trigger and Resolution Confidence (RC) bars, expand-to-detail
-rows, per-market detail pages, watchlists, an open-orders view, and a
-builder-attributed trading ticket.
+hood). Reads from the Phase 0 data pipeline at `../data/enriched-markets.json`
+and surfaces it as a sortable table with Δ-to-trigger and Resolution
+Confidence (RC) bars, expand-to-detail rows, per-market detail pages,
+watchlists, an open-orders view, and an in-page trading ticket.
 
 ## Getting started
 

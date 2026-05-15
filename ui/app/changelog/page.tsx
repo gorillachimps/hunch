@@ -38,7 +38,7 @@ const ENTRIES: Entry[] = [
       "/orders page now shows market names alongside the asset hash; order IDs are click-to-copy.",
       "ClobSession lifted into a React context — Polygon chain-switch prompt and L1 derivation now fire once per page mount, not once per consumer.",
       "Defensive fixes from end-to-end testing: BigInt(NaN) guard in the order ticket; throwOnError dropped from the bootstrap client so createOrDeriveApiKey can fall back to deriveApiKey for users who already have an API key; explicit wallet.switchChain(137) before signing; same-tab and cross-tab funder broadcast.",
-      "Builder code attribution verified on-chain end-to-end via the JS SDK path (matched fills carry the SombreroStepover bytes32).",
+      "Order attribution verified on-chain end-to-end via the JS SDK path.",
     ],
   },
   {
@@ -50,7 +50,7 @@ const ENTRIES: Entry[] = [
       "Click-to-expand rows reveal the resolution rule, 30-day implied-probability sparkline, and 1h / 24h / 7d / 30d deltas.",
       "Search, ticker filter, ★ starred filter, ⚡ live-only filter — all bookmarkable via URL state.",
       "Per-market detail pages at /markets/[slug] with shareable Open Graph cards.",
-      "Trading ticket attaches the Hunch builder code (SombreroStepover) to every order via Polymarket V2 + signature type 3.",
+      "Trading ticket signs and posts orders through the underlying venue at 0% / 0% fees.",
       "Watchlists and open orders pages.",
       "Public read-only API at /api/markets.",
       "Snapshot auto-refresh every 60 s with bid/mid/ask quick-pick in the order ticket.",

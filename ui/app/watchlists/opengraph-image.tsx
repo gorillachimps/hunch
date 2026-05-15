@@ -115,7 +115,7 @@ export default function Image() {
           >
             hunch
           </span>
-          <span>· Builder code: SombreroStepover</span>
+          <span>· crypto bets, sorted by signal</span>
         </div>
       </div>
     ),

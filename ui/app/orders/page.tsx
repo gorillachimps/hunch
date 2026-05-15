@@ -28,8 +28,8 @@ export default function OrdersPage() {
             </a>
           </div>
           <p className="mt-1 max-w-2xl text-sm text-muted">
-            Active limit orders for your connected wallet. Every order placed
-            through this UI carries the Hunch builder code.
+            Active limit orders for your connected wallet. Click to cancel
+            individually, or wipe the whole book with one button.
           </p>
           <OrdersView />
         </div>

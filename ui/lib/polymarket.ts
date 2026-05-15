@@ -11,8 +11,8 @@ import {
 } from "@polymarket/clob-client-v2";
 import type { WalletClient } from "viem";
 
-/** SombreroStepover builder code, registered 2026-05-06.
- *  Profile address: 0xb4fb45069b3f0f7c69937ca114849f5a8380da04 */
+/** Hunch builder code (bytes32). Registered 2026-05-06.
+ *  Operator wallet (proxy): 0xb4fb45069b3f0f7c69937ca114849f5a8380da04 */
 export const BUILDER_CODE =
   "0x1cc4300fca20eb0449c32d3c56d937d0a46e172d2707a62860b5f5311f2b608b";
 
@@ -268,6 +268,38 @@ export async function placeLimitOrder({
     },
     { tickSize, negRisk },
     OrderType.GTC,
+  );
+}
+
+export type PlaceMarketOrderInput = {
+  client: ClobClient;
+  tokenID: string;
+  /** BUY: USD amount to spend. SELL: shares to sell. */
+  amount: number;
+  side: Side;
+  tickSize: TickSize;
+  negRisk: boolean;
+};
+
+/** Submit a Fill-and-Kill market order: take whatever the book offers up to
+ *  `amount`, cancel the rest. Builder-code-attributed like limit orders. */
+export async function placeMarketOrder({
+  client,
+  tokenID,
+  amount,
+  side,
+  tickSize,
+  negRisk,
+}: PlaceMarketOrderInput) {
+  return client.createAndPostMarketOrder(
+    {
+      tokenID,
+      amount,
+      side,
+      builderCode: BUILDER_CODE,
+    },
+    { tickSize, negRisk },
+    OrderType.FAK,
   );
 }
 

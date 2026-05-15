@@ -109,18 +109,15 @@ export function HowItWorks() {
               </p>
             </Section>
 
-            <Section title="Builder code attribution">
+            <Section title="Fees & custody">
               <p>
-                Every order placed through the Yes/No buttons here carries the
-                Hunch builder code (
-                <span className="font-mono text-[11px]">SombreroStepover</span>)
-                attached to your fill. Maker/taker fee is{" "}
+                Maker/taker fee is{" "}
                 <span className="rounded-full bg-emerald-500/10 px-1.5 py-0 text-emerald-300 ring-1 ring-emerald-400/30">
                   0% / 0%
                 </span>{" "}
                 — Hunch adds nothing on top of the underlying venue. Orders are
                 signed by your connected wallet and routed through your existing
-                Polymarket account; Hunch never custodies funds.
+                account; Hunch never custodies funds.
               </p>
             </Section>
 

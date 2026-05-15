@@ -166,29 +166,18 @@ export default function DocsPage() {
 
           <Section id="trading" title="Trading">
             <p>
-              The Yes / No buttons on each row open an inline order ticket that
-              signs and posts a Polymarket V2 order through your connected
-              wallet, with the Hunch builder code attached for retro/airdrop
-              attribution.
+              The Yes / No buttons on each row open an inline order ticket.
+              Limit and market orders are both supported; market orders show
+              an estimated fill price and slippage computed against the live
+              order book. Maker and taker fees are{" "}
+              <strong className="text-foreground">0% / 0%</strong> — Hunch adds
+              nothing on top of the underlying venue.
             </p>
-            <ul className="mt-3 space-y-1 text-sm">
-              <li>
-                Builder code (bytes32):{" "}
-                <code className="break-all font-mono text-[11px] text-foreground/80">
-                  0x1cc4300fca20eb0449c32d3c56d937d0a46e172d2707a62860b5f5311f2b608b
-                </code>
-              </li>
-              <li>Profile name: SombreroStepover</li>
-              <li>Maker / taker fee: 0% / 0%</li>
-            </ul>
             <p className="mt-3">
-              Auth flow: your EOA signs an EIP-712 derivation message once per
-              session; the resulting L2 API credentials are cached in{" "}
-              <code>sessionStorage</code> for the rest of the tab. Orders are
-              signed with{" "}
-              <code className="text-foreground">SignatureType 3 (POLY_1271)</code>,
-              the Polymarket deposit-wallet flow — the EOA signs, the deposit
-              wallet (smart-contract proxy) is the funder.
+              Orders are signed by your connected wallet (EIP-712) once per
+              session and posted through your existing account at the venue.
+              Hunch never custodies funds and never moves anything outside an
+              explicit signature from you.
             </p>
           </Section>
 
