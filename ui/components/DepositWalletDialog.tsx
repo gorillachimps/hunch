@@ -5,10 +5,13 @@ import {
   Check,
   ClipboardPaste,
   ExternalLink,
+  Loader2,
+  Sparkles,
   X,
 } from "lucide-react";
 import { writeFunderAddress } from "@/lib/polymarket";
 import { useFocusTrap } from "@/lib/useFocusTrap";
+import { findPolymarketProxy } from "@/lib/findPolymarketProxy";
 import { cn } from "@/lib/cn";
 import { BridgeButton } from "./BridgeButton";
 
@@ -47,6 +50,12 @@ export function DepositWalletDialog({
   const [value, setValue] = useState(currentFunder ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pasting, setPasting] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  /** When the input was filled by our auto-detect rather than the user
+   *  pasting or typing it. Drives a friendly "we found this for you" badge. */
+  const [autoDetected, setAutoDetected] = useState(false);
+  /** Per-EOA cache of detect results so reopening the dialog doesn't refetch. */
+  const detectedFor = useRef<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useFocusTrap(open, dialogRef, 'input[type="text"]');
@@ -55,12 +64,47 @@ export function DepositWalletDialog({
     if (!open) return;
     setValue(currentFunder ?? "");
     setError(null);
+    setAutoDetected(false);
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, currentFunder, onClose]);
+
+  // Auto-detect the user's Polymarket proxy from their EOA. Only runs when:
+  //   - dialog is open
+  //   - we have an EOA
+  //   - we haven't already detected for this EOA
+  //   - the user hasn't already pasted something (keep their input)
+  // Falls back silently to manual entry if no proxy is found or the API
+  // route is unconfigured.
+  useEffect(() => {
+    if (!open) return;
+    if (!eoa) return;
+    if (detectedFor.current === eoa) return;
+    if (currentFunder) return; // already have a saved address
+    if (value.trim().length > 0) return;
+
+    detectedFor.current = eoa;
+    let cancelled = false;
+    setDetecting(true);
+    findPolymarketProxy(eoa)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.proxy) {
+          setValue(res.proxy);
+          setAutoDetected(true);
+          setError(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setDetecting(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, eoa, currentFunder, value]);
 
   if (!open) return null;
 
@@ -159,11 +203,28 @@ export function DepositWalletDialog({
           </div>
         ) : null}
 
-        {/* Step 1: paste the account address */}
+        {/* Auto-detect success banner. Only shown when we filled the field
+            via the on-chain lookup (not when the user pasted it themselves). */}
+        {autoDetected && isValid ? (
+          <div className="mt-3 flex items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-[11px]">
+            <Sparkles className="h-3 w-3 shrink-0 text-accent" aria-hidden="true" />
+            <span className="text-accent">
+              Found your Polymarket account
+            </span>
+            <span className="ml-auto text-muted-2">on-chain lookup</span>
+          </div>
+        ) : null}
+
+        {/* Step 1: paste the account address (or accept the auto-detected one) */}
         <div className="mt-4">
           <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-2">
             <span>Polymarket account address</span>
-            {isValid ? (
+            {detecting ? (
+              <span className="inline-flex items-center gap-1 font-normal normal-case text-muted">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                <span>looking it up…</span>
+              </span>
+            ) : isValid ? (
               <span className="inline-flex items-center gap-1 font-normal normal-case text-emerald-300">
                 <Check className="h-3 w-3" aria-hidden="true" />
                 <span>looks good</span>
@@ -177,6 +238,7 @@ export function DepositWalletDialog({
               onChange={(e) => {
                 setValue(e.target.value);
                 setError(null);
+                setAutoDetected(false);
               }}
               spellCheck={false}
               autoComplete="off"
