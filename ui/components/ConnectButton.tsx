@@ -7,6 +7,7 @@ import {
   Settings,
   AlertTriangle,
   ArrowDownToLine,
+  ArrowUpRight,
   Loader2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -15,8 +16,19 @@ import { isPrivyConfigured } from "@/lib/env-client";
 import { readFunderAddress } from "@/lib/polymarket";
 import { useClobSession } from "@/lib/useClobSession";
 import { DepositWalletDialog } from "./DepositWalletDialog";
-import { BridgeDialog } from "./BridgeDialog";
 import { cn } from "@/lib/cn";
+
+// USDC.e on Polygon for the bridge URL — same value the BridgeButton uses.
+const POLYGON_USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+
+function bridgeHref(funder: `0x${string}` | null): string {
+  const params = new URLSearchParams({
+    toChain: "137",
+    toToken: POLYGON_USDC_E,
+  });
+  if (funder) params.set("toAddress", funder);
+  return `https://jumper.exchange/?${params.toString()}`;
+}
 
 function shortAddress(a?: string) {
   if (!a) return "";
@@ -48,7 +60,6 @@ function ConnectButtonInner() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [funder, setFunder] = useState<`0x${string}` | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [bridgeOpen, setBridgeOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   // Reload funder when wallet changes
@@ -204,18 +215,17 @@ function ConnectButtonInner() {
               <Settings className="h-3.5 w-3.5 text-muted-2" />
               {funder ? "Change deposit wallet" : "Set deposit wallet"}
             </button>
-            <button
-              type="button"
+            <a
+              href={bridgeHref(funder)}
+              target="_blank"
+              rel="noopener noreferrer"
               role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                setBridgeOpen(true);
-              }}
+              onClick={() => setMenuOpen(false)}
               className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-surface-2"
               title={
                 funder
-                  ? "Bridge USDC from any chain — pre-fills your Polymarket account"
-                  : "Bridge USDC from any chain to Polygon"
+                  ? "Opens Jumper.exchange in a new tab with your Polymarket account pre-filled as the destination"
+                  : "Opens Jumper.exchange in a new tab — destination on Polygon USDC.e"
               }
             >
               <ArrowDownToLine className="h-3.5 w-3.5 text-muted-2" />
@@ -224,8 +234,10 @@ function ConnectButtonInner() {
                 <span className="rounded-full bg-amber-500/15 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider text-amber-200 ring-1 ring-amber-400/40">
                   no account
                 </span>
-              ) : null}
-            </button>
+              ) : (
+                <ArrowUpRight className="h-3 w-3 text-muted-2" aria-hidden="true" />
+              )}
+            </a>
             <button
               type="button"
               role="menuitem"
@@ -256,12 +268,6 @@ function ConnectButtonInner() {
           setFunder(addr);
           setDialogOpen(false);
         }}
-      />
-
-      <BridgeDialog
-        open={bridgeOpen}
-        toAddress={funder}
-        onClose={() => setBridgeOpen(false)}
       />
     </>
   );
