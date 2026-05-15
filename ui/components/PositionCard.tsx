@@ -58,6 +58,10 @@ export function PositionCard({ market }: { market: TableRow }) {
   const [holdings, setHoldings] = useState<Holdings | null>(null);
   const [loading, setLoading] = useState(false);
   const [sellOutcome, setSellOutcome] = useState<"yes" | "no" | null>(null);
+  // Separate flag for the one-click market-close path. The OrderTicket is the
+  // same component instance; we just open it with `initialOrderMode="market"`
+  // and the size pre-filled to the user's full holding.
+  const [closeOutcome, setCloseOutcome] = useState<"yes" | "no" | null>(null);
 
   // Data-api positions for this market — gives us avg entry + cash/percent P&L
   // computed against indexed fills (lagging the CLOB balance by a few seconds
@@ -165,6 +169,7 @@ export function PositionCard({ market }: { market: TableRow }) {
             tone="emerald"
             position={positions.yes}
             onSell={holdings.yes > 0 ? () => setSellOutcome("yes") : undefined}
+            onClose={holdings.yes > 0 ? () => setCloseOutcome("yes") : undefined}
           />
           <Side
             label="NO shares"
@@ -173,6 +178,7 @@ export function PositionCard({ market }: { market: TableRow }) {
             tone="rose"
             position={positions.no}
             onSell={holdings.no > 0 ? () => setSellOutcome("no") : undefined}
+            onClose={holdings.no > 0 ? () => setCloseOutcome("no") : undefined}
           />
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-wider text-muted-2">
@@ -215,6 +221,15 @@ export function PositionCard({ market }: { market: TableRow }) {
         maxShares={sellOutcome === "yes" ? holdings.yes : holdings.no}
         onClose={() => setSellOutcome(null)}
       />
+      <OrderTicket
+        open={closeOutcome !== null}
+        market={market}
+        initialOutcome={closeOutcome ?? "yes"}
+        side="sell"
+        initialOrderMode="market"
+        maxShares={closeOutcome === "yes" ? holdings.yes : holdings.no}
+        onClose={() => setCloseOutcome(null)}
+      />
     </>
   );
 }
@@ -226,6 +241,7 @@ function Side({
   tone,
   position,
   onSell,
+  onClose,
 }: {
   label: string;
   shares: number;
@@ -233,6 +249,7 @@ function Side({
   tone: "emerald" | "rose";
   position: Position | null;
   onSell?: () => void;
+  onClose?: () => void;
 }) {
   const colour =
     tone === "emerald" ? "text-emerald-300" : "text-rose-300";
@@ -255,14 +272,25 @@ function Side({
         <span className={cn("tabular text-lg font-semibold", colour)}>
           {shares.toFixed(2)}
         </span>
-        {onSell ? (
+        {onClose ? (
           <button
             type="button"
-            onClick={onSell}
+            onClick={onClose}
             className={cn(
               "rounded-md border px-2 py-0.5 text-[11px] font-semibold",
               ring,
             )}
+            title="Market-sell all shares at the best bid"
+          >
+            Close
+          </button>
+        ) : null}
+        {onSell ? (
+          <button
+            type="button"
+            onClick={onSell}
+            className="rounded-md border border-border-strong bg-surface px-2 py-0.5 text-[11px] font-semibold text-muted hover:bg-surface-2 hover:text-foreground"
+            title="Open the order ticket"
           >
             Sell
           </button>

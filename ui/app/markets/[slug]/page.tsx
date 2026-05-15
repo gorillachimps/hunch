@@ -10,6 +10,8 @@ import { OrderBookView } from "@/components/OrderBookView";
 import { LivePmImpliedStat } from "@/components/LivePmImpliedStat";
 import { TradePressureBar } from "@/components/TradePressureBar";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
+import { RecentTradesView } from "@/components/RecentTradesView";
+import { ShareButtons } from "@/components/ShareButtons";
 import { cn } from "@/lib/cn";
 import { getMarketBySlug } from "@/lib/data";
 import {
@@ -58,18 +60,24 @@ export default async function MarketDetailPage({ params }: Props) {
             Back to screener
           </a>
 
-          <div className="mt-3 flex flex-wrap items-start gap-3">
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1",
-                tone,
-              )}
-            >
-              {meta.label}
-            </span>
-            <span className="text-[12px] text-muted">
-              {fmtSourceLabel(row.source, row.pair)}
-            </span>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1",
+                  tone,
+                )}
+              >
+                {meta.label}
+              </span>
+              <span className="text-[12px] text-muted">
+                {fmtSourceLabel(row.source, row.pair)}
+              </span>
+            </div>
+            <ShareButtons
+              text={buildShareText(row)}
+              url={`${process.env.NEXT_PUBLIC_SITE_URL ?? "https://hunch.to"}/markets/${row.slug}`}
+            />
           </div>
           <h1 className="mt-2 text-2xl font-semibold leading-tight tracking-tight">
             {row.question}
@@ -143,8 +151,12 @@ export default async function MarketDetailPage({ params }: Props) {
             <TradePressureBar tokenYes={row.tokenYes ?? null} />
           </div>
 
-          <div className="mt-6">
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
             <OrderBookView
+              tokenYes={row.tokenYes ?? null}
+              tokenNo={row.tokenNo ?? null}
+            />
+            <RecentTradesView
               tokenYes={row.tokenYes ?? null}
               tokenNo={row.tokenNo ?? null}
             />
@@ -232,6 +244,35 @@ function Card({
       {children}
     </section>
   );
+}
+
+/** Build the pre-filled text for share-to-X / Farcaster. Includes the market
+ *  question and a short factoid line so a casual viewer can grasp the bet
+ *  without clicking through. */
+function buildShareText(row: {
+  question: string;
+  impliedYes: number | null;
+  liveState: string;
+  distancePct: number | null;
+  alreadyTriggered?: boolean | null;
+  thresholdValue?: number | null;
+  currentValue?: number | null;
+}): string {
+  const parts: string[] = [row.question];
+  if (
+    row.liveState === "live" &&
+    row.distancePct != null &&
+    !row.alreadyTriggered
+  ) {
+    const pct = (row.distancePct * 100).toFixed(1);
+    parts.push(`Δ ${pct}% to trigger.`);
+  } else if (row.alreadyTriggered) {
+    parts.push("✓ triggered.");
+  }
+  if (row.impliedYes != null) {
+    parts.push(`Implied YES ${(row.impliedYes * 100).toFixed(0)}%.`);
+  }
+  return parts.join(" ");
 }
 
 function ChangeStat({

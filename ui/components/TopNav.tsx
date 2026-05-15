@@ -1,7 +1,7 @@
 import { ConnectButton } from "./ConnectButton";
 import { HowItWorks } from "./HowItWorks";
 
-type ActiveTab = "screener" | "watchlists" | "portfolio" | "api" | "docs";
+type ActiveTab = "screener" | "watchlists" | "portfolio" | "activity" | "api" | "docs";
 
 // `hideOn` lets us drop low-priority tabs on narrow viewports so the row never
 // crowds the Connect button on phones.
@@ -14,6 +14,7 @@ const TABS: Array<{
   { id: "screener", label: "Screener", href: "/" },
   { id: "watchlists", label: "Watchlists", href: "/watchlists" },
   { id: "portfolio", label: "Portfolio", href: "/portfolio", hideOn: "mobile" },
+  { id: "activity", label: "Activity", href: "/activity", hideOn: "mobile" },
   { id: "api", label: "API", href: "/api/markets", hideOn: "small" },
   { id: "docs", label: "Docs", href: "/docs", hideOn: "small" },
 ];

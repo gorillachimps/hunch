@@ -29,7 +29,11 @@ type Props = {
    *  allowance check uses the conditional-token balance for the chosen outcome,
    *  and the submit posts a SELL order. */
   side?: SideMode;
-  /** When set, pre-fills size in SELL mode and caps the Max button. */
+  /** Defaults to "limit". Set "market" to open the ticket pre-configured for a
+   *  market order (used by the one-click close-position flow). */
+  initialOrderMode?: OrderMode;
+  /** When set, pre-fills size in SELL mode and caps the Max button. If
+   *  `initialOrderMode === "market"`, also seeds the size input to this value. */
   maxShares?: number;
   onClose: () => void;
 };
@@ -120,11 +124,12 @@ export function OrderTicket({
   market,
   initialOutcome,
   side = "buy",
+  initialOrderMode = "limit",
   maxShares,
   onClose,
 }: Props) {
   const session = useClobSession();
-  const [orderMode, setOrderMode] = useState<OrderMode>("limit");
+  const [orderMode, setOrderMode] = useState<OrderMode>(initialOrderMode);
   const [outcome, setOutcome] = useState<Outcome>(initialOutcome);
 
   // SELL: check the conditional-token allowance for the chosen outcome.
@@ -162,16 +167,22 @@ export function OrderTicket({
   const mid = bestBid != null && bestAsk != null ? (bestBid + bestAsk) / 2 : null;
 
   // Reset on open with sensible defaults: snap price near current mid.
+  // When `initialOrderMode === "market"` and we have a `maxShares` (close-flow),
+  // also pre-fill the size input so the user just has to click "Sell" once.
   useEffect(() => {
     if (open && market) {
       setOutcome(initialOutcome);
-      setOrderMode("limit");
+      setOrderMode(initialOrderMode);
       const implied = market.impliedYes ?? 0.5;
       const start = initialOutcome === "yes" ? implied : 1 - implied;
       setPriceStr(start ? Math.max(0.01, Math.min(0.99, start)).toFixed(2) : "0.50");
-      setSizeStr("");
+      if (initialOrderMode === "market" && maxShares != null && maxShares > 0) {
+        setSizeStr(maxShares.toFixed(2));
+      } else {
+        setSizeStr("");
+      }
     }
-  }, [open, market, initialOutcome]);
+  }, [open, market, initialOutcome, initialOrderMode, maxShares]);
 
   useEffect(() => {
     if (!open) return;
