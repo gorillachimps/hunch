@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ExternalLink, X } from "lucide-react";
+import {
+  Check,
+  ClipboardPaste,
+  ExternalLink,
+  X,
+} from "lucide-react";
 import { writeFunderAddress } from "@/lib/polymarket";
 import { useFocusTrap } from "@/lib/useFocusTrap";
+import { cn } from "@/lib/cn";
 import { BridgeButton } from "./BridgeButton";
 
 type Props = {
@@ -14,6 +20,23 @@ type Props = {
   onSaved: (funder: `0x${string}`) => void;
 };
 
+/**
+ * "Last-step" dialog that links the connected wallet to the user's existing
+ * Polymarket account (the smart-contract proxy that actually holds USDC).
+ *
+ * UX goals after a friend's feedback that the previous version felt
+ * counter-intuitive:
+ *   - Show the connected wallet at the top so the user doesn't think we're
+ *     asking them to connect a second wallet.
+ *   - One clear primary input with inline validation feedback (green check on
+ *     valid, red on "that's your wallet, not your account").
+ *   - One-click "Paste from clipboard" button so a user who just copied their
+ *     address from Polymarket can finish in a single click.
+ *   - Distinct call to the polymarket.com settings page where the address
+ *     lives, AND a separate card for users who haven't created an account yet.
+ *   - Bridge prompt only after the address is valid — avoids cluttering the
+ *     primary call-to-action.
+ */
 export function DepositWalletDialog({
   open,
   eoa,
@@ -23,6 +46,7 @@ export function DepositWalletDialog({
 }: Props) {
   const [value, setValue] = useState(currentFunder ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [pasting, setPasting] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useFocusTrap(open, dialogRef, 'input[type="text"]');
@@ -40,22 +64,47 @@ export function DepositWalletDialog({
 
   if (!open) return null;
 
-  const isValid = /^0x[0-9a-fA-F]{40}$/.test(value.trim());
+  const trimmed = value.trim();
+  const looksValid = /^0x[0-9a-fA-F]{40}$/.test(trimmed);
+  const sameAsWallet =
+    looksValid && trimmed.toLowerCase() === (eoa ?? "").toLowerCase();
+  const isValid = looksValid && !sameAsWallet;
+
+  async function pasteFromClipboard() {
+    setPasting(true);
+    try {
+      const text = await navigator.clipboard.readText();
+      const cleaned = text.trim();
+      if (/^0x[0-9a-fA-F]{40}$/.test(cleaned)) {
+        setValue(cleaned);
+        setError(null);
+      } else {
+        setError(
+          "Clipboard doesn't contain a valid Polygon address. Copy your address from Polymarket first.",
+        );
+      }
+    } catch {
+      setError(
+        "Couldn't read your clipboard automatically. Paste with Cmd/Ctrl+V instead.",
+      );
+    } finally {
+      setPasting(false);
+    }
+  }
 
   function save() {
-    const trimmed = value.trim();
-    if (!/^0x[0-9a-fA-F]{40}$/.test(trimmed)) {
+    if (sameAsWallet) {
+      setError(
+        "That's your wallet — we need your Polymarket account (proxy), which is a different address.",
+      );
+      return;
+    }
+    if (!looksValid) {
       setError("Address must look like 0x followed by 40 hex characters.");
       return;
     }
     if (!eoa) {
       setError("Connect a wallet first.");
-      return;
-    }
-    if (trimmed.toLowerCase() === eoa.toLowerCase()) {
-      setError(
-        "That's your connected wallet, not your Polymarket account address. Find the account (proxy) address at polymarket.com → settings → Builder Codes → Address.",
-      );
       return;
     }
     writeFunderAddress(eoa, trimmed as `0x${string}`);
@@ -67,7 +116,7 @@ export function DepositWalletDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="deposit-wallet-title"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/60 px-4"
+      className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/60 px-4 py-6"
       onClick={onClose}
     >
       <div
@@ -75,92 +124,142 @@ export function DepositWalletDialog({
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-md rounded-lg border border-border-strong bg-surface p-5 shadow-2xl"
       >
-        <div className="mb-3 flex items-start justify-between">
-          <h2 id="deposit-wallet-title" className="text-base font-semibold tracking-tight">
-            Connect your trading account
-          </h2>
+        <div className="mb-1 flex items-start justify-between gap-3">
+          <div>
+            <h2
+              id="deposit-wallet-title"
+              className="text-base font-semibold tracking-tight"
+            >
+              Almost ready
+            </h2>
+            <p className="mt-1 text-[12px] leading-relaxed text-muted">
+              Hunch routes orders through your existing Polymarket account.
+              Link it once — no funds move into Hunch.
+            </p>
+          </div>
           <button
             type="button"
             aria-label="Close"
             onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded text-muted hover:text-foreground"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded text-muted hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <p className="text-[12px] leading-relaxed text-muted">
-          One-time setup. Hunch never custodies funds — your wallet signs every
-          order and trades route through your existing{" "}
-          <a
-            href="https://polymarket.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent hover:underline"
-          >
-            Polymarket
-          </a>{" "}
-          account. Paste your account address below and you&apos;re done.
-        </p>
+        {/* Connected wallet status — reassures the user the wallet is already
+            handled and that this isn't asking for a second wallet. */}
+        {eoa ? (
+          <div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-400/30 bg-emerald-500/5 px-3 py-2 text-[11px]">
+            <Check className="h-3 w-3 shrink-0 text-emerald-300" aria-hidden="true" />
+            <span className="text-emerald-300">Wallet connected</span>
+            <span className="ml-auto font-mono text-foreground/85">
+              {eoa.slice(0, 6)}…{eoa.slice(-4)}
+            </span>
+          </div>
+        ) : null}
 
-        <div className="mt-3 flex flex-col gap-1 rounded-md border border-border bg-surface-2/40 px-3 py-2 text-[11px] text-muted">
-          <span className="text-foreground">Don&apos;t have one yet?</span>
+        {/* Step 1: paste the account address */}
+        <div className="mt-4">
+          <div className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-2">
+            <span>Polymarket account address</span>
+            {isValid ? (
+              <span className="inline-flex items-center gap-1 font-normal normal-case text-emerald-300">
+                <Check className="h-3 w-3" aria-hidden="true" />
+                <span>looks good</span>
+              </span>
+            ) : null}
+          </div>
+          <div className="relative">
+            <input
+              type="text"
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value);
+                setError(null);
+              }}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="0xa1b2c3…"
+              className={cn(
+                "w-full rounded-md border bg-background px-3 py-2.5 pr-20 font-mono text-[12px] text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2",
+                isValid
+                  ? "border-emerald-400/40 focus:ring-emerald-400/40"
+                  : sameAsWallet
+                    ? "border-rose-400/40 focus:ring-rose-400/40"
+                    : "border-border-strong focus:ring-accent/40",
+              )}
+            />
+            <button
+              type="button"
+              onClick={pasteFromClipboard}
+              disabled={pasting}
+              className="absolute right-1 top-1/2 inline-flex -translate-y-1/2 items-center gap-1 rounded px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/15 disabled:opacity-50"
+              title="Paste from clipboard"
+            >
+              <ClipboardPaste className="h-3 w-3" aria-hidden="true" />
+              {pasting ? "Pasting…" : "Paste"}
+            </button>
+          </div>
+          {sameAsWallet ? (
+            <p className="mt-1.5 text-[11px] text-rose-300">
+              That&apos;s your wallet — we need your Polymarket{" "}
+              <em>account</em>, which is a different (smart-contract) address.
+            </p>
+          ) : error ? (
+            <p className="mt-1.5 text-[11px] text-rose-300">{error}</p>
+          ) : null}
+
           <a
-            href="https://polymarket.com"
+            href="https://polymarket.com/settings?tab=builder"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-accent hover:underline"
+            className="mt-2 inline-flex items-center gap-1 text-[12px] text-accent hover:underline"
           >
-            Create a Polymarket account first <ExternalLink className="h-3 w-3" />
+            Open Polymarket → grab my address
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         </div>
 
-        <a
-          href="https://polymarket.com/settings?tab=builder"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 inline-flex items-center gap-1 text-[12px] text-accent hover:underline"
-        >
-          Find your account address <ExternalLink className="h-3 w-3" />
-        </a>
-
-        <label className="mt-4 block text-[10px] uppercase tracking-wider text-muted-2">
-          Polymarket account address
-        </label>
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
-            setError(null);
-          }}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="0x..."
-          className="mt-1 w-full rounded-md border border-border-strong bg-background px-3 py-2 font-mono text-[12px] text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-accent/40"
-        />
-        {error ? (
-          <p className="mt-2 text-[12px] text-rose-300">{error}</p>
-        ) : null}
-
+        {/* Bridge prompt — only when we have a valid target so the bridge widget
+            gets the right recipient pre-filled. */}
         {isValid ? (
-          <div className="mt-3 flex items-start justify-between gap-3 rounded-md border border-border bg-surface-2/40 px-3 py-2">
+          <div className="mt-4 flex items-start justify-between gap-3 rounded-md border border-border bg-surface-2/40 px-3 py-2">
             <div className="text-[11px] text-muted">
               <div className="text-foreground">Need USDC in your account?</div>
               <div className="mt-0.5 text-muted-2">
-                Bridge from any chain — Jumper sends it straight to your trading
+                Bridge from any chain — Jumper sends USDC straight to your
                 account on Polygon.
               </div>
             </div>
             <BridgeButton
-              toAddress={value.trim() as `0x${string}`}
+              toAddress={trimmed as `0x${string}`}
               variant="secondary"
               label="Bridge"
             />
           </div>
         ) : null}
 
-        <div className="mt-4 flex items-center justify-end gap-2">
+        {/* New-user lane — visually distinct, no input. */}
+        <div className="mt-4 rounded-md border border-border bg-background/40 px-3 py-2.5 text-[12px]">
+          <div className="font-medium text-foreground">
+            No Polymarket account yet?
+          </div>
+          <div className="mt-0.5 text-muted-2">
+            Free to create. ~60 seconds. Come back and finish here.
+          </div>
+          <a
+            href="https://polymarket.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-accent hover:underline"
+          >
+            Create on Polymarket
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+          </a>
+        </div>
+
+        <div className="mt-5 flex items-center justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
@@ -172,9 +271,9 @@ export function DepositWalletDialog({
             type="button"
             onClick={save}
             disabled={!isValid}
-            className="rounded-md border border-accent/40 bg-accent/15 px-3 py-1.5 text-[13px] font-medium text-accent hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/15 px-3 py-1.5 text-[13px] font-semibold text-accent hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Save
+            Save & start trading
           </button>
         </div>
       </div>
