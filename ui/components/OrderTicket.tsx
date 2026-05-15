@@ -16,6 +16,7 @@ import { useLiveBook, type Level } from "@/lib/useLiveMarket";
 import { track } from "@/lib/track";
 import { cn } from "@/lib/cn";
 import type { TableRow } from "@/lib/types";
+import { BridgeButton } from "./BridgeButton";
 
 type Outcome = "yes" | "no";
 type SideMode = "buy" | "sell";
@@ -673,8 +674,16 @@ export function OrderTicket({
             </button>
           </div>
         ) : blocker ? (
-          <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
-            {blocker}
+          <div className="mt-3 flex items-start justify-between gap-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2">
+            <span className="text-[12px] text-amber-200">{blocker}</span>
+            {/^Insufficient pUSD/.test(blocker) && session.funderAddress ? (
+              <BridgeButton
+                toAddress={session.funderAddress}
+                variant="secondary"
+                label="Top up"
+                className="shrink-0"
+              />
+            ) : null}
           </div>
         ) : null}
 

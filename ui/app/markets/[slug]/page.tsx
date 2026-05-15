@@ -12,6 +12,7 @@ import { TradePressureBar } from "@/components/TradePressureBar";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { RecentTradesView } from "@/components/RecentTradesView";
 import { ShareButtons } from "@/components/ShareButtons";
+import { DisqusComments } from "@/components/DisqusComments";
 import { cn } from "@/lib/cn";
 import { getMarketBySlug } from "@/lib/data";
 import {
@@ -179,6 +180,14 @@ export default async function MarketDetailPage({ params }: Props) {
               <ChangeStat label="7d" value={row.oneWeekChange} />
               <ChangeStat label="30d" value={row.oneMonthChange} />
             </div>
+          </div>
+
+          <div className="mt-6">
+            <DisqusComments
+              identifier={row.slug}
+              title={row.question}
+              url={`${process.env.NEXT_PUBLIC_SITE_URL ?? "https://hunch.to"}/markets/${row.slug}`}
+            />
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-3 text-[12px] text-muted">

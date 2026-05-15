@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { writeFunderAddress } from "@/lib/polymarket";
 import { useFocusTrap } from "@/lib/useFocusTrap";
+import { BridgeButton } from "./BridgeButton";
 
 type Props = {
   open: boolean;
@@ -140,6 +141,23 @@ export function DepositWalletDialog({
         />
         {error ? (
           <p className="mt-2 text-[12px] text-rose-300">{error}</p>
+        ) : null}
+
+        {isValid ? (
+          <div className="mt-3 flex items-start justify-between gap-3 rounded-md border border-border bg-surface-2/40 px-3 py-2">
+            <div className="text-[11px] text-muted">
+              <div className="text-foreground">Need USDC in your account?</div>
+              <div className="mt-0.5 text-muted-2">
+                Bridge from any chain — Jumper sends it straight to your trading
+                account on Polygon.
+              </div>
+            </div>
+            <BridgeButton
+              toAddress={value.trim() as `0x${string}`}
+              variant="secondary"
+              label="Bridge"
+            />
+          </div>
         ) : null}
 
         <div className="mt-4 flex items-center justify-end gap-2">
