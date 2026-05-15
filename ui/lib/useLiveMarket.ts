@@ -314,3 +314,163 @@ export function useWsStatus(): WsStatus {
   useEffect(() => polymarketMarketWs.onStatus(setStatus), []);
   return status;
 }
+
+/** Per-token metadata needed to render a trade event into a human row. */
+export type TokenInfo = {
+  marketTitle: string;
+  marketSlug: string;
+  outcome: "yes" | "no";
+};
+
+export type WhaleTrade = {
+  /** Stable key: assetId + timestamp. */
+  id: string;
+  assetId: string;
+  marketTitle: string;
+  marketSlug: string;
+  outcome: "yes" | "no";
+  side: "BUY" | "SELL";
+  price: number;
+  size: number;
+  notionalUsd: number;
+  /** Unix milliseconds. */
+  timestamp: number;
+};
+
+/**
+ * Tap the WS `last_trade_price` channel and surface fills whose USDC notional
+ * meets a threshold. Captures live activity across the supplied tokens (the
+ * screener's top-N set is the natural input).
+ *
+ * Returns the most recent `maxItems`, sorted newest-first. Stale on page load —
+ * the feed is empty until a fresh fill arrives. Seeding from data-api would
+ * fix that but isn't free; we lean on the screener already being open during
+ * an active session.
+ */
+export function useWhaleFeed(
+  tokenInfo: Map<string, TokenInfo>,
+  thresholdUsd = 100,
+  maxItems = 20,
+): WhaleTrade[] {
+  const [feed, setFeed] = useState<WhaleTrade[]>([]);
+  const depKey = useMemo(
+    () => [...tokenInfo.keys()].sort().join(","),
+    [tokenInfo],
+  );
+
+  useEffect(() => {
+    const ids = depKey ? depKey.split(",") : [];
+    if (ids.length === 0) {
+      setFeed([]);
+      return;
+    }
+    const unsub = polymarketMarketWs.subscribe(ids, {
+      onLastTrade: (e) => {
+        const assetId = e.asset_id as string;
+        const info = tokenInfo.get(assetId);
+        if (!info) return;
+        const price = parseFloat(e.price as string);
+        const size = parseFloat(e.size as string);
+        const notional = price * size;
+        if (!isFinite(notional) || notional < thresholdUsd) return;
+        const tsRaw = e.timestamp as string | undefined;
+        const tsNum = tsRaw ? parseFloat(tsRaw) : NaN;
+        const ts = isFinite(tsNum)
+          ? tsNum > 1e12
+            ? tsNum
+            : tsNum * 1000
+          : Date.now();
+        const trade: WhaleTrade = {
+          id: `${assetId}-${ts}`,
+          assetId,
+          marketTitle: info.marketTitle,
+          marketSlug: info.marketSlug,
+          outcome: info.outcome,
+          side: (e.side as "BUY" | "SELL") ?? "BUY",
+          price,
+          size,
+          notionalUsd: notional,
+          timestamp: ts,
+        };
+        setFeed((prev) => {
+          // De-dup: if the same id arrives twice (e.g. a server re-broadcast),
+          // skip the second occurrence rather than rendering two identical rows.
+          if (prev.length > 0 && prev[0].id === trade.id) return prev;
+          return [trade, ...prev].slice(0, maxItems);
+        });
+      },
+    });
+    return unsub;
+  }, [depKey, thresholdUsd, maxItems, tokenInfo]);
+
+  return feed;
+}
+
+/** Rolling buy/sell flow stats for a token, derived from WS last_trade_price
+ *  events over a configurable window. Useful for an "order-flow pressure" bar
+ *  on the market detail page. */
+export type TradePressure = {
+  /** Total BUY notional in the window. */
+  buyVolume: number;
+  /** Total SELL notional in the window. */
+  sellVolume: number;
+  /** Trade count in the window. */
+  count: number;
+  /** Window length in ms. */
+  windowMs: number;
+};
+
+export function useTradePressure(
+  tokenId: string | null | undefined,
+  windowMs = 5 * 60 * 1000,
+): TradePressure {
+  const [trades, setTrades] = useState<
+    Array<{ ts: number; side: "BUY" | "SELL"; notional: number }>
+  >([]);
+  useEffect(() => {
+    if (!tokenId) {
+      setTrades([]);
+      return;
+    }
+    setTrades([]);
+    const unsub = polymarketMarketWs.subscribe([tokenId], {
+      onLastTrade: (e) => {
+        const price = parseFloat(e.price as string);
+        const size = parseFloat(e.size as string);
+        const notional = price * size;
+        if (!isFinite(notional) || notional <= 0) return;
+        const tsRaw = e.timestamp as string | undefined;
+        const tsNum = tsRaw ? parseFloat(tsRaw) : NaN;
+        const ts = isFinite(tsNum)
+          ? tsNum > 1e12
+            ? tsNum
+            : tsNum * 1000
+          : Date.now();
+        setTrades((prev) => {
+          const cutoff = Date.now() - windowMs;
+          const next = [
+            ...prev.filter((t) => t.ts >= cutoff),
+            { ts, side: (e.side as "BUY" | "SELL") ?? "BUY", notional },
+          ];
+          return next;
+        });
+      },
+    });
+    return unsub;
+  }, [tokenId, windowMs]);
+
+  // Trim on render so the window stays current even between events.
+  return useMemo(() => {
+    const cutoff = Date.now() - windowMs;
+    let buy = 0;
+    let sell = 0;
+    let count = 0;
+    for (const t of trades) {
+      if (t.ts < cutoff) continue;
+      count++;
+      if (t.side === "BUY") buy += t.notional;
+      else sell += t.notional;
+    }
+    return { buyVolume: buy, sellVolume: sell, count, windowMs };
+  }, [trades, windowMs]);
+}

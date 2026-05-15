@@ -5,7 +5,7 @@ import { X, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { useClobSession } from "@/lib/useClobSession";
 import { useBalanceAllowance, fmtCollateral } from "@/lib/useBalanceAllowance";
-import { placeLimitOrder, Side } from "@/lib/polymarket";
+import { placeLimitOrder, Side, updateAllowance } from "@/lib/polymarket";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { track } from "@/lib/track";
 import { cn } from "@/lib/cn";
@@ -54,6 +54,7 @@ export function OrderTicket({ open, market, initialOutcome, side = "buy", maxSha
   const [priceStr, setPriceStr] = useState("");
   const [sizeStr, setSizeStr] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [book, setBook] = useState<{ bid: number | null; ask: number | null }>(
     { bid: null, ask: null },
   );
@@ -184,6 +185,38 @@ export function OrderTicket({ open, market, initialOutcome, side = "buy", maxSha
     errors.length === 0 &&
     !submitting;
 
+  async function approve() {
+    if (!session.client) return;
+    setApproving(true);
+    const what = side === "buy" ? "pUSD" : `${outcome.toUpperCase()} shares`;
+    const toastId = toast.loading(`Approving ${what} for trading…`);
+    try {
+      await updateAllowance(session.client, allowanceTokenId);
+      toast.success(`${what} approved. You can place orders now.`, {
+        id: toastId,
+        duration: 5000,
+      });
+      track("allowance_approved", {
+        side,
+        outcome,
+        slug: market?.slug,
+        family: market?.family,
+      });
+      allowance.refresh();
+    } catch (e) {
+      const msg = (e as Error).message ?? "approval failed";
+      toast.error(`Approval failed: ${msg}`, { id: toastId, duration: 8000 });
+      track("allowance_failed", {
+        side,
+        outcome,
+        slug: market?.slug,
+        reason: msg.slice(0, 80),
+      });
+    } finally {
+      setApproving(false);
+    }
+  }
+
   async function submit() {
     if (!session.client || !tokenId || !market) return;
     setSubmitting(true);
@@ -253,14 +286,18 @@ export function OrderTicket({ open, market, initialOutcome, side = "buy", maxSha
     }
   })();
 
+  // Allowance approval state: shown as an inline CTA instead of a textual
+  // blocker so the user can fix it without leaving Hunch.
+  const needsApproval =
+    session.status === "ready" &&
+    !allowance.loading &&
+    !allowance.error &&
+    !allowance.hasAnyAllowance;
+
   const allowanceBlocker = (() => {
     if (session.status !== "ready") return null;
     if (allowance.loading || allowance.error) return null;
-    if (!allowance.hasAnyAllowance) {
-      return side === "buy"
-        ? "Deposit-wallet allowance is 0 — approve at polymarket.com first."
-        : "Outcome-token allowance is 0 — approve at polymarket.com first.";
-    }
+    if (needsApproval) return null; // handled via the Approve CTA below
     if (side === "buy") {
       // Guard against NaN: parseFloat("") is NaN, BigInt(NaN) would throw.
       // Treat unknown size as the $1 minimum so the check still does something.
@@ -420,7 +457,32 @@ export function OrderTicket({ open, market, initialOutcome, side = "buy", maxSha
           </ul>
         ) : null}
 
-        {blocker ? (
+        {needsApproval ? (
+          <div className="mt-3 flex items-start justify-between gap-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2">
+            <div className="text-[12px] text-amber-200">
+              <div className="font-medium">
+                {side === "buy"
+                  ? "Approve pUSD for trading"
+                  : `Approve ${outcome.toUpperCase()} shares for selling`}
+              </div>
+              <div className="text-amber-200/80">
+                One-time on-chain transaction. Hunch sends it through your
+                connected wallet — no funds change hands.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={approve}
+              disabled={approving}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-amber-300/50 bg-amber-400/20 px-3 py-1.5 text-[12px] font-semibold text-amber-100 hover:bg-amber-400/30 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {approving ? (
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              ) : null}
+              {approving ? "Approving…" : "Approve"}
+            </button>
+          </div>
+        ) : blocker ? (
           <div className="mt-3 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
             {blocker}
           </div>

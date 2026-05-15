@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { MarqueeBar } from "./MarqueeBar";
 import { Screener } from "./Screener";
 import { SnapshotMeta } from "./SnapshotMeta";
+import { WhaleFeedStream } from "./WhaleFeedStream";
 import type { TableRow } from "@/lib/types";
 
 const REFRESH_MS = 60_000;
@@ -94,6 +95,7 @@ export function HomeShell({
 
   return (
     <>
+      <WhaleFeedStream rows={rows} />
       <MarqueeBar rows={rows} />
       <main id="main" className="flex-1">
         <div className="mx-auto max-w-[1480px] px-4 pt-6 pb-2">

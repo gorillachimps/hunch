@@ -219,6 +219,23 @@ export async function getBalanceAllowance(
   });
 }
 
+/** Approve the Polymarket exchange to pull collateral (or, with `tokenId`,
+ *  the named conditional token) from the user's deposit wallet. Sends an
+ *  on-chain transaction via the SDK; resolves after confirmation.
+ *
+ *  Use this in onboarding ("Activate trading") and as an inline recovery
+ *  when an order is blocked by zero allowance. The SDK picks a near-max
+ *  allowance amount internally. */
+export async function updateAllowance(
+  client: ClobClient,
+  tokenId?: string,
+): Promise<void> {
+  await client.updateBalanceAllowance({
+    asset_type: tokenId ? AssetType.CONDITIONAL : AssetType.COLLATERAL,
+    token_id: tokenId,
+  });
+}
+
 export type PlaceOrderInput = {
   client: ClobClient;
   tokenID: string;

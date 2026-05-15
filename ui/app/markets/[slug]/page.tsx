@@ -5,10 +5,11 @@ import { TopNav } from "@/components/TopNav";
 import { Footer } from "@/components/Footer";
 import { DeltaBar } from "@/components/DeltaBar";
 import { RcBar } from "@/components/RcBar";
-import { Sparkline } from "@/components/Sparkline";
 import { PositionCard } from "@/components/PositionCard";
 import { OrderBookView } from "@/components/OrderBookView";
 import { LivePmImpliedStat } from "@/components/LivePmImpliedStat";
+import { TradePressureBar } from "@/components/TradePressureBar";
+import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { cn } from "@/lib/cn";
 import { getMarketBySlug } from "@/lib/data";
 import {
@@ -21,7 +22,6 @@ import {
 } from "@/lib/format";
 import { familyMeta, FAMILY_TONE_CLASSES } from "@/lib/families";
 import { summarizeRules } from "@/lib/rules";
-import type { TableRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -37,22 +37,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-function clamp01(n: number) {
-  if (!isFinite(n)) return 0;
-  return Math.max(0, Math.min(1, n));
-}
-
-function buildHistory(r: TableRow): number[] {
-  const now = clamp01(r.impliedYes ?? 0.5);
-  const minus1h = clamp01(now - (r.oneHourChange ?? 0));
-  const minus24h = clamp01(now - (r.oneDayChange ?? 0));
-  const minus7d = clamp01(now - (r.oneWeekChange ?? r.oneDayChange ?? 0));
-  const minus30d = clamp01(
-    now - (r.oneMonthChange ?? r.oneWeekChange ?? r.oneDayChange ?? 0),
-  );
-  return [minus30d, minus7d, minus24h, minus1h, now];
-}
-
 export default async function MarketDetailPage({ params }: Props) {
   const { slug } = await params;
   const row = await getMarketBySlug(slug);
@@ -60,14 +44,6 @@ export default async function MarketDetailPage({ params }: Props) {
 
   const meta = familyMeta(row.family);
   const tone = FAMILY_TONE_CLASSES[meta.tone];
-  const history = buildHistory(row);
-  const overall = history[history.length - 1] - history[0];
-  const trendColor =
-    overall > 0.001
-      ? "text-emerald-300"
-      : overall < -0.001
-        ? "text-rose-300"
-        : "text-muted-2";
 
   return (
     <>
@@ -164,6 +140,10 @@ export default async function MarketDetailPage({ params }: Props) {
           </div>
 
           <div className="mt-6">
+            <TradePressureBar tokenYes={row.tokenYes ?? null} />
+          </div>
+
+          <div className="mt-6">
             <OrderBookView
               tokenYes={row.tokenYes ?? null}
               tokenNo={row.tokenNo ?? null}
@@ -179,22 +159,15 @@ export default async function MarketDetailPage({ params }: Props) {
             </p>
           </Card>
 
-          <Card className="mt-6" title="Implied probability, last 30d">
-            <div className="flex items-center gap-4">
-              <span className={trendColor}>
-                <Sparkline values={history} width={420} height={64} />
-              </span>
-              <div className="flex flex-1 flex-wrap gap-x-6 gap-y-2 text-[12px]">
-                <ChangeStat label="1h" value={row.oneHourChange} />
-                <ChangeStat label="24h" value={row.oneDayChange} />
-                <ChangeStat label="7d" value={row.oneWeekChange} />
-                <ChangeStat label="30d" value={row.oneMonthChange} />
-              </div>
+          <div className="mt-6">
+            <PriceHistoryChart tokenId={row.tokenYes ?? null} />
+            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-[12px]">
+              <ChangeStat label="1h" value={row.oneHourChange} />
+              <ChangeStat label="24h" value={row.oneDayChange} />
+              <ChangeStat label="7d" value={row.oneWeekChange} />
+              <ChangeStat label="30d" value={row.oneMonthChange} />
             </div>
-            <p className="mt-2 text-[11px] text-muted-2">
-              Reconstructed from cumulative change windows; not a tick-by-tick history.
-            </p>
-          </Card>
+          </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-3 text-[12px] text-muted">
             <a

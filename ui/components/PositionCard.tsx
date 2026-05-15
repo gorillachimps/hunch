@@ -5,6 +5,7 @@ import { Loader2, Wallet } from "lucide-react";
 import { useClobSession } from "@/lib/useClobSession";
 import { getBalanceAllowance } from "@/lib/polymarket";
 import { useLiveMid } from "@/lib/useLiveMarket";
+import { useUserMarketPositions, type Position } from "@/lib/useUserPositions";
 import { cn } from "@/lib/cn";
 import type { TableRow } from "@/lib/types";
 import { OrderTicket } from "./OrderTicket";
@@ -35,12 +36,36 @@ function fmtUSD(n: number): string {
   }).format(n);
 }
 
+function fmtSignedUSD(n: number): string {
+  if (!isFinite(n) || Math.abs(n) < 0.005) return "$0.00";
+  const sign = n > 0 ? "+" : "−";
+  return `${sign}${fmtUSD(Math.abs(n))}`;
+}
+
+function fmtSignedPct(n: number): string {
+  if (!isFinite(n) || Math.abs(n) < 0.05) return "—";
+  return `${n > 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
+
+function fmtPrice(n: number): string {
+  if (!isFinite(n)) return "—";
+  return `$${n.toFixed(3)}`;
+}
+
 export function PositionCard({ market }: { market: TableRow }) {
   const session = useClobSession();
   const liveYesMid = useLiveMid(market.tokenYes);
   const [holdings, setHoldings] = useState<Holdings | null>(null);
   const [loading, setLoading] = useState(false);
   const [sellOutcome, setSellOutcome] = useState<"yes" | "no" | null>(null);
+
+  // Data-api positions for this market — gives us avg entry + cash/percent P&L
+  // computed against indexed fills (lagging the CLOB balance by a few seconds
+  // but the only source of truth for cost basis).
+  const positions = useUserMarketPositions(session.funderAddress, [
+    market.tokenYes,
+    market.tokenNo,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,8 +101,6 @@ export function PositionCard({ market }: { market: TableRow }) {
     };
   }, [session.client, session.status, market.tokenYes, market.tokenNo]);
 
-  // Don't render at all unless we have a session — keeps the page identical
-  // for unauthenticated viewers.
   if (session.status !== "ready") return null;
   if (!holdings) {
     return (
@@ -108,12 +131,21 @@ export function PositionCard({ market }: { market: TableRow }) {
     );
   }
 
-  // Prefer the live mid from the WS feed; fall back to the snapshot value
-  // when the WS hasn't returned a book yet (first ~200ms after mount).
   const implied = liveYesMid ?? market.impliedYes ?? 0.5;
-  const yesValue = holdings.yes * implied;
-  const noValue = holdings.no * (1 - implied);
-  const totalValue = yesValue + noValue;
+  // Mark each side at the live YES probability — NO price is its complement.
+  const yesMark = holdings.yes * implied;
+  const noMark = holdings.no * (1 - implied);
+  const totalMark = yesMark + noMark;
+
+  // Sum P&L across both outcomes when present.
+  const cashPnl =
+    (positions.yes?.cashPnl ?? 0) + (positions.no?.cashPnl ?? 0);
+  const totalCost =
+    (positions.yes?.initialValue ?? 0) + (positions.no?.initialValue ?? 0);
+  const percentPnl =
+    totalCost > 0 ? (cashPnl / totalCost) * 100 : 0;
+  const haveAnyPnlData = positions.yes != null || positions.no != null;
+  const pnlSign = cashPnl > 0.005 ? 1 : cashPnl < -0.005 ? -1 : 0;
 
   return (
     <>
@@ -121,21 +153,25 @@ export function PositionCard({ market }: { market: TableRow }) {
         <h2 className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
           <Wallet className="h-3 w-3" />
           Your position
-          {loading ? <Loader2 className="h-3 w-3 animate-spin opacity-60" /> : null}
+          {loading || positions.loading ? (
+            <Loader2 className="h-3 w-3 animate-spin opacity-60" />
+          ) : null}
         </h2>
         <div className="grid gap-3 sm:grid-cols-3">
           <Side
             label="YES shares"
             shares={holdings.yes}
-            value={yesValue}
+            mark={yesMark}
             tone="emerald"
+            position={positions.yes}
             onSell={holdings.yes > 0 ? () => setSellOutcome("yes") : undefined}
           />
           <Side
             label="NO shares"
             shares={holdings.no}
-            value={noValue}
+            mark={noMark}
             tone="rose"
+            position={positions.no}
             onSell={holdings.no > 0 ? () => setSellOutcome("no") : undefined}
           />
           <div className="flex flex-col">
@@ -143,11 +179,31 @@ export function PositionCard({ market }: { market: TableRow }) {
               Mark-to-market
             </span>
             <span className="tabular text-lg font-semibold text-foreground">
-              {fmtUSD(totalValue)}
+              {fmtUSD(totalMark)}
             </span>
-            <span className="text-[10px] text-muted">
-              at {(implied * 100).toFixed(0)}% implied
-            </span>
+            {haveAnyPnlData ? (
+              <span
+                className={cn(
+                  "tabular text-[11px] font-medium",
+                  pnlSign > 0
+                    ? "text-emerald-300"
+                    : pnlSign < 0
+                      ? "text-rose-300"
+                      : "text-muted",
+                )}
+              >
+                P&L {fmtSignedUSD(cashPnl)}
+                {percentPnl !== 0 && Math.abs(percentPnl) >= 0.05 ? (
+                  <span className="ml-1 opacity-80">
+                    ({fmtSignedPct(percentPnl)})
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted">
+                at {(implied * 100).toFixed(0)}% implied
+              </span>
+            )}
           </div>
         </div>
       </section>
@@ -166,14 +222,16 @@ export function PositionCard({ market }: { market: TableRow }) {
 function Side({
   label,
   shares,
-  value,
+  mark,
   tone,
+  position,
   onSell,
 }: {
   label: string;
   shares: number;
-  value: number;
+  mark: number;
   tone: "emerald" | "rose";
+  position: Position | null;
   onSell?: () => void;
 }) {
   const colour =
@@ -182,6 +240,12 @@ function Side({
     tone === "emerald"
       ? "border-emerald-400/30 bg-emerald-500/5 text-emerald-300 hover:bg-emerald-500/15"
       : "border-rose-400/30 bg-rose-500/5 text-rose-300 hover:bg-rose-500/15";
+
+  const cashPnl = position?.cashPnl ?? null;
+  const percentPnl = position?.percentPnl ?? null;
+  const pnlSign =
+    cashPnl == null ? 0 : cashPnl > 0.005 ? 1 : cashPnl < -0.005 ? -1 : 0;
+
   return (
     <div className="flex flex-col">
       <span className="text-[10px] uppercase tracking-wider text-muted-2">
@@ -204,7 +268,38 @@ function Side({
           </button>
         ) : null}
       </div>
-      <span className="text-[10px] text-muted">{fmtUSD(value)} mark</span>
+      {shares > 0 ? (
+        <div className="mt-0.5 flex flex-col gap-0 text-[10px] text-muted">
+          {position && position.avgPrice > 0 ? (
+            <span className="tabular">
+              avg {fmtPrice(position.avgPrice)}{" "}
+              <span className="text-muted-2">·</span>{" "}
+              now {fmtPrice(position.curPrice || mark / Math.max(shares, 1))}
+            </span>
+          ) : (
+            <span>{fmtUSD(mark)} mark</span>
+          )}
+          {cashPnl != null && Math.abs(cashPnl) >= 0.005 ? (
+            <span
+              className={cn(
+                "tabular font-medium",
+                pnlSign > 0
+                  ? "text-emerald-300"
+                  : pnlSign < 0
+                    ? "text-rose-300"
+                    : "text-muted",
+              )}
+            >
+              {fmtSignedUSD(cashPnl)}
+              {percentPnl != null && Math.abs(percentPnl) >= 0.05 ? (
+                <span className="ml-1 opacity-80">
+                  ({fmtSignedPct(percentPnl)})
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
