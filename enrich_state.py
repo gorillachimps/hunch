@@ -23,6 +23,11 @@ IN = Path(__file__).parent / "data" / "parsed-markets.json"
 OUT = Path(__file__).parent / "data" / "enriched-markets.json"
 
 BINANCE = "https://api.binance.com/api/v3/ticker/price"
+# CryptoCompare is the fallback when Binance is geo-blocked. GitHub Actions
+# runners are on Azure US IPs; Binance returns HTTP 451 (Unavailable For
+# Legal Reasons) to those. CryptoCompare's free tier has no such restriction
+# and returns USDT-denominated quotes for every coin we care about.
+CRYPTOCOMPARE = "https://min-api.cryptocompare.com/data/pricemulti"
 
 
 def fetch_binance_prices(symbols: list[str]) -> dict[str, float]:
@@ -33,6 +38,73 @@ def fetch_binance_prices(symbols: list[str]) -> dict[str, float]:
     data = r.json()  # list of {symbol, price}
     wanted = set(symbols)
     return {row["symbol"]: float(row["price"]) for row in data if row["symbol"] in wanted}
+
+
+def fetch_cryptocompare_prices(symbols: list[str]) -> dict[str, float]:
+    """Fallback price source. Polymarket's binance_price markets quote in USDT;
+    CryptoCompare's `pricemulti` endpoint accepts base symbols (e.g. BTC) and
+    a comma-joined list of quote symbols. We strip the USDT/USDC suffix from
+    the inputs and rebuild the BTCUSDT-style keys on the way out.
+
+    Major coins agree with Binance to within a few bps. For thin-volume
+    altcoins this can drift more, but the alternative is no price at all
+    when GitHub Actions can't reach Binance."""
+    bases: set[str] = set()
+    for s in symbols:
+        if s.endswith("USDT"):
+            bases.add(s[: -len("USDT")])
+        elif s.endswith("USDC"):
+            bases.add(s[: -len("USDC")])
+    if not bases:
+        return {}
+    # CryptoCompare caps each request at ~80 fsyms; we're well under.
+    r = requests.get(
+        CRYPTOCOMPARE,
+        params={"fsyms": ",".join(sorted(bases)), "tsyms": "USDT"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    data = r.json()  # {"BTC": {"USDT": 80122.5}, ...} OR {"Response": "Error", ...}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, float] = {}
+    for base, quotes in data.items():
+        if not isinstance(quotes, dict):
+            continue
+        usdt = quotes.get("USDT")
+        if usdt is None:
+            continue
+        try:
+            out[f"{base}USDT"] = float(usdt)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def fetch_prices(symbols: list[str]) -> dict[str, float]:
+    """Try Binance first (Polymarket's resolution source), fall back to
+    CryptoCompare when Binance is geo-blocked (HTTP 451) or otherwise
+    unreachable. Returns the raw price dict; caller decides what to do
+    with any symbols still missing afterwards."""
+    try:
+        prices = fetch_binance_prices(symbols)
+        # Binance returns 451 with a JSON body in some regions but our code
+        # path raises on non-2xx, so getting here means we have a real
+        # response. Trust it.
+        return prices
+    except requests.HTTPError as e:
+        status = getattr(e.response, "status_code", None)
+        if status == 451:
+            print(
+                f"  Binance returned 451 (region-blocked; common on US "
+                f"GitHub Actions runners). Falling back to CryptoCompare."
+            )
+        else:
+            print(f"  Binance error {status}; falling back to CryptoCompare.")
+        return fetch_cryptocompare_prices(symbols)
+    except requests.RequestException as e:
+        print(f"  Binance network error ({e}); falling back to CryptoCompare.")
+        return fetch_cryptocompare_prices(symbols)
 
 
 def enrich_binance_price(m: dict, prices: dict[str, float]) -> dict:
@@ -149,7 +221,7 @@ def main() -> None:
                      if r.get("family") == "binance_price" and r.get("pair")}
     print(f"Fetching Binance prices for {len(binance_pairs)} symbols...")
     t0 = time.time()
-    prices = fetch_binance_prices(list(binance_pairs))
+    prices = fetch_prices(list(binance_pairs))
     print(f"  got {len(prices)} symbols in {time.time()-t0:.1f}s")
 
     # 2. Enrich each market
