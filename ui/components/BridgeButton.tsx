@@ -1,10 +1,9 @@
 "use client";
 
-import { ArrowUpRight } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/cn";
-
-// USDC.e on Polygon — the canonical collateral token Polymarket accepts.
-const POLYGON_USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+import { BridgeDialog } from "./BridgeDialog";
 
 type Variant = "primary" | "secondary" | "inline";
 
@@ -21,16 +20,9 @@ type Props = {
 };
 
 /**
- * Bridge USDC into a Polymarket trading account.
- *
- * Hands off to Jumper.exchange (LI.FI's hosted bridge UI) with the destination
- * chain (Polygon), token (USDC.e), and recipient address pre-selected. Opens
- * in a new tab so the user keeps Hunch open behind.
- *
- * Why an external hand-off rather than an embedded widget:
- *   1. Zero integrator config — no API keys, no bundle hit (~500KB+ avoided)
- *   2. The user lands on a familiar, audited UI for the actual fund movement
- *   3. Easy to swap to an embedded widget later without changing call sites
+ * Opens the embedded BridgeDialog (LI.FI widget) so the user can fund their
+ * Polymarket account without leaving Hunch. The dialog itself is lazy-loaded,
+ * so this button costs ~zero bundle until clicked.
  */
 export function BridgeButton({
   toAddress,
@@ -38,12 +30,7 @@ export function BridgeButton({
   label,
   className,
 }: Props) {
-  const params = new URLSearchParams({
-    toChain: "137",
-    toToken: POLYGON_USDC_E,
-  });
-  if (toAddress) params.set("toAddress", toAddress);
-  const href = `https://jumper.exchange/?${params.toString()}`;
+  const [open, setOpen] = useState(false);
 
   const base =
     "inline-flex items-center gap-1.5 rounded-md text-[12px] font-semibold transition-colors";
@@ -57,15 +44,21 @@ export function BridgeButton({
   };
 
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn(base, stylesByVariant[variant], className)}
-      title="Opens Jumper.exchange in a new tab"
-    >
-      {label ?? "Bridge USDC"}
-      <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
-    </a>
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={cn(base, stylesByVariant[variant], className)}
+        title="Bridge USDC from any chain to your Polymarket account"
+      >
+        {label ?? "Bridge USDC"}
+        <ArrowRight className="h-3 w-3" aria-hidden="true" />
+      </button>
+      <BridgeDialog
+        open={open}
+        toAddress={toAddress ?? null}
+        onClose={() => setOpen(false)}
+      />
+    </>
   );
 }
