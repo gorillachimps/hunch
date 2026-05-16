@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+  AreaSeries,
+  ColorType,
+  createChart,
+  CrosshairMode,
+  LineStyle,
+  type IChartApi,
+  type ISeriesApi,
+  type UTCTimestamp,
+} from "lightweight-charts";
 import { Loader2 } from "lucide-react";
 import { CLOB_HOST } from "@/lib/polymarket";
 import { cn } from "@/lib/cn";
@@ -20,67 +21,30 @@ type Point = { t: number; p: number };
 
 type RangeSpec = {
   label: string;
-  /** Seconds before now. */
-  lookbackSec: number;
-  /** Fidelity (minutes between samples). */
+  /** CLOB `interval` value. The old `startTs`/`endTs` time-window form is
+   *  still accepted but the server now rejects windows beyond ~14 days as
+   *  "interval too long", so we switched to the named-interval form which
+   *  has no such cap. */
+  interval: "1d" | "1w" | "1m" | "max";
+  /** Minutes between samples. */
   fidelity: number;
-  /** Date-axis formatter. */
-  fmtTick: (ms: number) => string;
 };
 
 const RANGES: Record<Range, RangeSpec> = {
-  "1d": {
-    label: "1D",
-    lookbackSec: 86_400,
-    fidelity: 5,
-    fmtTick: (ms) =>
-      new Date(ms).toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: false,
-      }),
-  },
-  "7d": {
-    label: "7D",
-    lookbackSec: 7 * 86_400,
-    fidelity: 60,
-    fmtTick: (ms) =>
-      new Date(ms).toLocaleDateString("en-US", {
-        weekday: "short",
-      }),
-  },
-  "30d": {
-    label: "30D",
-    lookbackSec: 30 * 86_400,
-    fidelity: 240,
-    fmtTick: (ms) =>
-      new Date(ms).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      }),
-  },
-  all: {
-    label: "All",
-    lookbackSec: 365 * 86_400,
-    fidelity: 1440,
-    fmtTick: (ms) =>
-      new Date(ms).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      }),
-  },
+  "1d": { label: "1D", interval: "1d", fidelity: 5 },
+  "7d": { label: "7D", interval: "1w", fidelity: 60 },
+  "30d": { label: "30D", interval: "1m", fidelity: 240 },
+  all: { label: "All", interval: "max", fidelity: 1440 },
 };
 
 async function fetchHistory(
   tokenId: string,
-  lookbackSec: number,
+  interval: RangeSpec["interval"],
   fidelity: number,
 ): Promise<Point[]> {
-  const now = Math.floor(Date.now() / 1000);
   const params = new URLSearchParams({
     market: tokenId,
-    startTs: String(now - lookbackSec),
-    endTs: String(now),
+    interval,
     fidelity: String(fidelity),
   });
   const r = await fetch(`${CLOB_HOST}/prices-history?${params}`, {
@@ -106,10 +70,34 @@ type Props = {
   tokenId: string | null;
 };
 
+/**
+ * Implied-probability history for a market. Renders via TradingView's open-
+ * source `lightweight-charts` — same engine Coinbase and dYdX use — which
+ * buys us:
+ *
+ *   - Pixel-precise canvas rendering at 60fps even on long series
+ *   - A real crosshair with snap-to-bar price/time readout
+ *   - Pinch/scroll-to-zoom, panning, double-click-to-reset for free
+ *   - The "this looks like a real product" perception bump
+ *
+ * We replaced a Recharts AreaChart that did roughly the same thing but
+ * looked indie. The data-fetch (CLOB /prices-history) and range selector
+ * are unchanged.
+ */
 export function PriceHistoryChart({ tokenId }: Props) {
   const [range, setRange] = useState<Range>("30d");
   const [data, setData] = useState<Point[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  // Bumped each time the chart instance is (re)created so the data + tone
+  // effects know to re-apply. Necessary because React strict mode in dev
+  // mounts effects twice — without this counter, the second mount creates
+  // a fresh chart that never receives `data` (which hasn't changed) and
+  // renders blank canvases.
+  const [chartGen, setChartGen] = useState(0);
 
   useEffect(() => {
     if (!tokenId) return;
@@ -117,7 +105,7 @@ export function PriceHistoryChart({ tokenId }: Props) {
     setData(null);
     setErr(null);
     const spec = RANGES[range];
-    fetchHistory(tokenId, spec.lookbackSec, spec.fidelity)
+    fetchHistory(tokenId, spec.interval, spec.fidelity)
       .then((points) => {
         if (!cancelled) setData(points);
       })
@@ -136,18 +124,115 @@ export function PriceHistoryChart({ tokenId }: Props) {
     return { first: f, last: l, deltaPp: (l - f) * 100 };
   }, [data]);
 
-  const lineTone =
-    deltaPp > 0 ? "stroke-emerald-300" : deltaPp < 0 ? "stroke-rose-300" : "stroke-zinc-300";
-  const fillTone =
-    deltaPp > 0 ? "fill-emerald-500/15" : deltaPp < 0 ? "fill-rose-500/15" : "fill-zinc-500/15";
-  const strokeColor =
-    deltaPp > 0 ? "#6ee7b7" : deltaPp < 0 ? "#fda4af" : "#a1a1aa";
-  const fillColor =
-    deltaPp > 0
-      ? "rgba(52,211,153,0.15)"
-      : deltaPp < 0
-        ? "rgba(248,113,113,0.15)"
-        : "rgba(161,161,170,0.15)";
+  const tone: "up" | "down" | "flat" =
+    deltaPp > 0 ? "up" : deltaPp < 0 ? "down" : "flat";
+
+  // Mount the chart once; tear down on unmount. All data + style updates
+  // happen via the series API in subsequent effects so we never thrash
+  // canvas creation.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: el.clientHeight,
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: "#8a91a3",
+        fontSize: 11,
+        fontFamily:
+          "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+      },
+      grid: {
+        vertLines: { color: "rgba(255,255,255,0.04)" },
+        horzLines: { color: "rgba(255,255,255,0.06)" },
+      },
+      rightPriceScale: {
+        borderColor: "rgba(255,255,255,0.08)",
+      },
+      timeScale: {
+        borderColor: "rgba(255,255,255,0.08)",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          color: "rgba(167,139,250,0.6)",
+          style: LineStyle.Dashed,
+          labelBackgroundColor: "#2a3142",
+        },
+        horzLine: {
+          color: "rgba(167,139,250,0.6)",
+          style: LineStyle.Dashed,
+          labelBackgroundColor: "#2a3142",
+        },
+      },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
+    });
+
+    const series = chart.addSeries(AreaSeries, {
+      lineWidth: 2,
+      priceLineVisible: true,
+      priceLineColor: "rgba(167,139,250,0.4)",
+      priceLineStyle: LineStyle.Dotted,
+      lastValueVisible: true,
+      priceFormat: {
+        type: "custom",
+        formatter: (price: number) => `${(price * 100).toFixed(1)}%`,
+        minMove: 0.001,
+      },
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = series;
+    setChartGen((g) => g + 1);
+
+    return () => {
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, []);
+
+  // Push fresh data into the existing series when the range changes — or
+  // when the chart instance was just (re)created (chartGen bump).
+  useEffect(() => {
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart || !data) return;
+    if (data.length === 0) {
+      series.setData([]);
+      return;
+    }
+    series.setData(
+      data.map((d) => ({
+        time: Math.floor(d.t / 1000) as UTCTimestamp,
+        value: d.p,
+      })),
+    );
+    chart.timeScale().fitContent();
+  }, [data, chartGen]);
+
+  // Recolour line + fill when the trend flips between up/down/flat. Also
+  // re-runs on chart re-creation so the new series picks up the current tone.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const palette =
+      tone === "up"
+        ? { line: "#34d399", top: "rgba(52,211,153,0.28)", bottom: "rgba(52,211,153,0)" }
+        : tone === "down"
+          ? { line: "#f87171", top: "rgba(248,113,113,0.28)", bottom: "rgba(248,113,113,0)" }
+          : { line: "#a1a1aa", top: "rgba(161,161,170,0.22)", bottom: "rgba(161,161,170,0)" };
+    series.applyOptions({
+      lineColor: palette.line,
+      topColor: palette.top,
+      bottomColor: palette.bottom,
+    });
+  }, [tone, chartGen]);
 
   return (
     <section className="rounded-md border border-border bg-surface/40 p-4">
@@ -163,7 +248,7 @@ export function PriceHistoryChart({ tokenId }: Props) {
             <span
               className={cn(
                 "tabular normal-case font-medium text-[11px]",
-                deltaPp > 0 ? "text-emerald-300" : "text-rose-300",
+                tone === "up" ? "text-emerald-300" : "text-rose-300",
               )}
             >
               {deltaPp > 0 ? "+" : ""}
@@ -175,87 +260,25 @@ export function PriceHistoryChart({ tokenId }: Props) {
       </div>
 
       <div className="relative h-56 w-full">
+        {/* Always render the chart container so the chart instance can mount
+            once. Overlays cover it while loading/error/empty. */}
+        <div ref={containerRef} className="absolute inset-0" />
         {err ? (
-          <p className="absolute inset-0 grid place-items-center text-[12px] text-rose-300">
+          <p className="absolute inset-0 grid place-items-center bg-surface/40 text-[12px] text-rose-300">
             Couldn&apos;t load history: {err}
           </p>
         ) : !data ? (
-          <div className="absolute inset-0 grid place-items-center text-[12px] text-muted">
+          <div className="absolute inset-0 grid place-items-center bg-surface/40 text-[12px] text-muted">
             <span className="inline-flex items-center gap-2">
               <Loader2 className="h-3 w-3 animate-spin" />
               Loading {RANGES[range].label}…
             </span>
           </div>
         ) : data.length === 0 ? (
-          <p className="absolute inset-0 grid place-items-center text-[12px] text-muted">
+          <p className="absolute inset-0 grid place-items-center bg-surface/40 text-[12px] text-muted">
             No history for this range.
           </p>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
-              data={data}
-              margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-            >
-              <defs>
-                <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={strokeColor} stopOpacity={0.25} />
-                  <stop offset="100%" stopColor={strokeColor} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis
-                dataKey="t"
-                type="number"
-                scale="time"
-                domain={["dataMin", "dataMax"]}
-                tick={{ fill: "#8a91a3", fontSize: 10 }}
-                stroke="rgba(255,255,255,0.1)"
-                tickFormatter={(v) => RANGES[range].fmtTick(v as number)}
-                minTickGap={40}
-              />
-              <YAxis
-                domain={[0, 1]}
-                ticks={[0, 0.25, 0.5, 0.75, 1]}
-                tick={{ fill: "#8a91a3", fontSize: 10 }}
-                stroke="rgba(255,255,255,0.1)"
-                tickFormatter={(v) => `${Math.round((v as number) * 100)}%`}
-                width={36}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: "rgba(13,15,20,0.95)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: 6,
-                  fontSize: 12,
-                  padding: "6px 10px",
-                }}
-                labelStyle={{ color: "#bdc2cf" }}
-                labelFormatter={(v) =>
-                  new Date(v as number).toLocaleString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })
-                }
-                formatter={(v) => {
-                  const n = typeof v === "number" ? v : parseFloat(String(v));
-                  return [`${(n * 100).toFixed(1)}%`, "Implied YES"];
-                }}
-              />
-              <Area
-                type="monotone"
-                dataKey="p"
-                stroke={strokeColor}
-                strokeWidth={1.5}
-                fill="url(#priceFill)"
-                fillOpacity={1}
-                isAnimationActive={false}
-                className={cn(lineTone, fillTone)}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
+        ) : null}
       </div>
     </section>
   );

@@ -25,3 +25,32 @@ export async function findPolymarketProxy(
     return { proxy: null };
   }
 }
+
+/**
+ * Reverse lookup: given a candidate Polymarket DepositWallet proxy address,
+ * return the EOAs listed as initial owners on-chain. `available: false`
+ * means we couldn't run the check (no API key configured, network glitch)
+ * and the caller should fail open rather than block the user. Used by the
+ * deposit-wallet dialog to catch the "wrong wallet connected, right proxy
+ * pasted" failure mode — the bytecode check alone can't detect this.
+ */
+export async function findProxyOwners(
+  proxy: string,
+): Promise<{ owners: `0x${string}`[]; available: boolean }> {
+  try {
+    const r = await fetch(`/api/find-proxy?proxy=${proxy}`, {
+      cache: "no-store",
+    });
+    if (r.status === 503) {
+      return { owners: [], available: false };
+    }
+    if (!r.ok) return { owners: [], available: false };
+    const data = (await r.json()) as { owners?: string[] };
+    return {
+      owners: (data.owners ?? []).map((a) => a as `0x${string}`),
+      available: true,
+    };
+  } catch {
+    return { owners: [], available: false };
+  }
+}

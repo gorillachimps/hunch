@@ -63,12 +63,25 @@ export async function GET(req: NextRequest) {
   }
 
   const eoa = req.nextUrl.searchParams.get("eoa");
-  if (!eoa || !/^0x[0-9a-fA-F]{40}$/.test(eoa)) {
-    return NextResponse.json({ error: "Invalid EOA address." }, { status: 400 });
+  // Reverse mode: given a candidate proxy address, return the EOAs it lists
+  // as initial owners (one OwnershipTransferred(0x0, owner) event per owner
+  // when the multi-owner proxy is deployed). The dialog uses this to confirm
+  // that the connected wallet is actually authorised on the pasted proxy.
+  const proxyParam = req.nextUrl.searchParams.get("proxy");
+
+  if (eoa) {
+    return forwardLookup(eoa, apiKey);
   }
+  if (proxyParam) {
+    return reverseLookup(proxyParam, apiKey);
+  }
+  return NextResponse.json(
+    { error: "Pass either ?eoa=… (forward) or ?proxy=… (reverse)." },
+    { status: 400 },
+  );
+}
 
-  const eoaTopic = `0x${eoa.slice(2).toLowerCase().padStart(64, "0")}`;
-
+function buildEtherscanUrl(apiKey: string): URL {
   // Etherscan V2 multi-chain endpoint. Polygonscan's V1 endpoint
   // (api.polygonscan.com/api) is deprecated as of 2024 — Etherscan unified
   // every chain under api.etherscan.io/v2 with a `chainid` parameter. The
@@ -81,42 +94,28 @@ export async function GET(req: NextRequest) {
   url.searchParams.set("toBlock", "latest");
   url.searchParams.set("topic0", OWNERSHIP_TRANSFERRED_TOPIC);
   url.searchParams.set("topic1", ZERO_TOPIC);
+  url.searchParams.set("apikey", apiKey);
+  return url;
+}
+
+async function forwardLookup(eoa: string, apiKey: string) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(eoa)) {
+    return NextResponse.json({ error: "Invalid EOA address." }, { status: 400 });
+  }
+
+  const eoaTopic = `0x${eoa.slice(2).toLowerCase().padStart(64, "0")}`;
+  const url = buildEtherscanUrl(apiKey);
   url.searchParams.set("topic2", eoaTopic);
   url.searchParams.set("topic0_1_opr", "and");
   url.searchParams.set("topic0_2_opr", "and");
   url.searchParams.set("topic1_2_opr", "and");
-  url.searchParams.set("apikey", apiKey);
 
   try {
-    const r = await fetch(url.toString(), { cache: "no-store" });
-    if (!r.ok) {
-      throw new Error(`Polygonscan HTTP ${r.status}`);
+    const logs = await fetchLogs(url);
+    if (logs == null) {
+      return NextResponse.json({ proxy: null });
     }
-    const body = (await r.json()) as {
-      status: string;
-      message?: string;
-      result?: Log[] | string;
-    };
-
-    // Polygonscan returns status "0" for "no result" (with message "No
-    // records found") AND for actual errors. Distinguish by inspecting
-    // `result`: array on success, string on error.
-    if (body.status !== "1") {
-      if (Array.isArray(body.result)) {
-        return NextResponse.json({ proxy: null });
-      }
-      // Treat "No records found" as a clean miss.
-      if (body.message === "No records found") {
-        return NextResponse.json({ proxy: null });
-      }
-      return NextResponse.json(
-        { error: body.message ?? "Polygonscan error" },
-        { status: 502 },
-      );
-    }
-
-    const logs = (body.result ?? []) as Log[];
-    if (!Array.isArray(logs) || logs.length === 0) {
+    if (logs.length === 0) {
       return NextResponse.json({ proxy: null });
     }
 
@@ -132,8 +131,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ proxy: null });
     }
 
-    // Stash the count so callers can decide whether to warn about multiple
-    // matches (rare; usually 0 or 1).
     return NextResponse.json({
       proxy,
       count: logs.length,
@@ -144,4 +141,63 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
+}
+
+async function reverseLookup(proxy: string, apiKey: string) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(proxy)) {
+    return NextResponse.json({ error: "Invalid proxy address." }, { status: 400 });
+  }
+
+  const url = buildEtherscanUrl(apiKey);
+  url.searchParams.set("address", proxy);
+  url.searchParams.set("topic0_1_opr", "and");
+
+  try {
+    const logs = await fetchLogs(url);
+    if (logs == null || logs.length === 0) {
+      return NextResponse.json({ owners: [] });
+    }
+
+    // Each OwnershipTransferred(0x0, newOwner) event lists one owner in
+    // topic2. The multi-owner proxy's `deploy(address[], bytes32[])` emits
+    // one event per owner. Collect and dedupe.
+    const owners = new Set<string>();
+    for (const log of logs) {
+      const ownerTopic = log.topics?.[2];
+      if (!ownerTopic) continue;
+      const addr = `0x${ownerTopic.slice(-40)}`.toLowerCase();
+      if (/^0x[0-9a-f]{40}$/.test(addr) && addr !== "0x" + "0".repeat(40)) {
+        owners.add(addr);
+      }
+    }
+
+    return NextResponse.json({
+      owners: Array.from(owners),
+      count: owners.size,
+    });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
+async function fetchLogs(url: URL): Promise<Log[] | null> {
+  const r = await fetch(url.toString(), { cache: "no-store" });
+  if (!r.ok) {
+    throw new Error(`Polygonscan HTTP ${r.status}`);
+  }
+  const body = (await r.json()) as {
+    status: string;
+    message?: string;
+    result?: Log[] | string;
+  };
+  // Polygonscan returns status "0" for "no result" (with message "No
+  // records found") AND for actual errors. Distinguish by inspecting
+  // `result`: array on success, string on error.
+  if (body.status !== "1") {
+    if (Array.isArray(body.result)) return [];
+    if (body.message === "No records found") return [];
+    throw new Error(body.message ?? "Polygonscan error");
+  }
+  const logs = (body.result ?? []) as Log[];
+  return Array.isArray(logs) ? logs : null;
 }

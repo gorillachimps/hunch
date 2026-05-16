@@ -11,6 +11,7 @@ import { LivePmImpliedStat } from "@/components/LivePmImpliedStat";
 import { TradePressureBar } from "@/components/TradePressureBar";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { RecentTradesView } from "@/components/RecentTradesView";
+import { TradeSizeDistribution } from "@/components/TradeSizeDistribution";
 import { ShareButtons } from "@/components/ShareButtons";
 import { DisqusComments } from "@/components/DisqusComments";
 import { cn } from "@/lib/cn";
@@ -148,8 +149,12 @@ export default async function MarketDetailPage({ params }: Props) {
             <PositionCard market={row} />
           </div>
 
-          <div className="mt-6">
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
             <TradePressureBar tokenYes={row.tokenYes ?? null} />
+            <TradeSizeDistribution
+              tokenYes={row.tokenYes ?? null}
+              tokenNo={row.tokenNo ?? null}
+            />
           </div>
 
           <div className="mt-6 grid gap-4 lg:grid-cols-2">

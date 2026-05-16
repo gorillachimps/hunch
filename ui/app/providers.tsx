@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { PrivyProvider } from "@privy-io/react-auth";
 import { WagmiProvider } from "@privy-io/wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { polygon } from "viem/chains";
+import { arbitrum, base, mainnet, optimism, polygon } from "viem/chains";
 import { Toaster } from "sonner";
 import { useState } from "react";
 import { isPrivyConfigured, PRIVY_APP_ID } from "@/lib/env-client";
@@ -31,7 +31,7 @@ export function Providers({ children }: { children: ReactNode }) {
       appId={PRIVY_APP_ID}
       config={{
         defaultChain: polygon,
-        supportedChains: [polygon],
+        supportedChains: [polygon, mainnet, optimism, arbitrum, base],
         loginMethods: ["wallet"],
         appearance: {
           theme: "dark",

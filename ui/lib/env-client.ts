@@ -7,6 +7,12 @@ export const SITE_URL =
 export const POLYGON_RPC_URL =
   process.env.NEXT_PUBLIC_POLYGON_RPC_URL ?? "https://polygon-rpc.com";
 
+// Across attribution. Optional — the SDK works without it; setting this just
+// credits Hunch for routed volume on across.to's integrator dashboard. Get a
+// bytes32 from https://across.to and set NEXT_PUBLIC_ACROSS_INTEGRATOR_ID.
+export const ACROSS_INTEGRATOR_ID =
+  process.env.NEXT_PUBLIC_ACROSS_INTEGRATOR_ID ?? "";
+
 // Optional: drop a Plausible script tag in <head> when this is set. Default
 // host is plausible.io's; override for self-hosted instances. No-op otherwise.
 export const PLAUSIBLE_DOMAIN =

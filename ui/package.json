@@ -9,6 +9,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@across-protocol/app-sdk": "^0.6.0",
     "@polymarket/clob-client-v2": "^1.0.6",
     "@privy-io/react-auth": "^3.23.1",
     "@privy-io/wagmi": "^4.0.6",
@@ -16,6 +17,7 @@
     "@tanstack/react-table": "^8.21.3",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.20",
+    "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.14.0",
     "next": "16.2.6",
     "nuqs": "^2.8.9",

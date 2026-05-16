@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   ClipboardPaste,
@@ -9,9 +10,11 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { usePublicClient } from "wagmi";
+import { polygon } from "viem/chains";
 import { writeFunderAddress } from "@/lib/polymarket";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { findPolymarketProxy } from "@/lib/findPolymarketProxy";
+import { findPolymarketProxy, findProxyOwners } from "@/lib/findPolymarketProxy";
 import { cn } from "@/lib/cn";
 import { BridgeButton } from "./BridgeButton";
 
@@ -51,6 +54,8 @@ export function DepositWalletDialog({
   const [error, setError] = useState<string | null>(null);
   const [pasting, setPasting] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const publicClient = usePublicClient({ chainId: polygon.id });
   /** When the input was filled by our auto-detect rather than the user
    *  pasting or typing it. Drives a friendly "we found this for you" badge. */
   const [autoDetected, setAutoDetected] = useState(false);
@@ -106,7 +111,13 @@ export function DepositWalletDialog({
     };
   }, [open, eoa, currentFunder, value]);
 
-  if (!open) return null;
+  // Defer portal mount until after hydration so SSR doesn't see a stub.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!open || !mounted) return null;
 
   const trimmed = value.trim();
   const looksValid = /^0x[0-9a-fA-F]{40}$/.test(trimmed);
@@ -136,7 +147,7 @@ export function DepositWalletDialog({
     }
   }
 
-  function save() {
+  async function save() {
     if (sameAsWallet) {
       setError(
         "That's your wallet — we need your Polymarket account (proxy), which is a different address.",
@@ -151,11 +162,66 @@ export function DepositWalletDialog({
       setError("Connect a wallet first.");
       return;
     }
+
+    // Catch the two silent-breakage failure modes before they become "balance
+    // shows 0 and the user has no idea why":
+    //
+    //   1. Pasted an EOA, not a proxy. The Polymarket *account* is the smart
+    //      contract that polymarket.com deploys for the user — it has bytecode
+    //      on Polygon. An EOA doesn't. If we accept an EOA, every CLOB call
+    //      silently returns zero balance / no positions.
+    //
+    //   2. Pasted a real proxy, but it doesn't belong to the connected wallet.
+    //      The proxy's `owners` array on-chain tells us who can sign for it.
+    //      If the connected EOA isn't in there, derived credentials work but
+    //      the API returns nothing useful — same silent zero outcome.
+    setVerifying(true);
+    setError(null);
+    try {
+      // Step 1: bytecode check (purely client-side, always available).
+      if (publicClient) {
+        const code = await publicClient.getCode({
+          address: trimmed as `0x${string}`,
+        });
+        const hasBytecode = !!code && code !== "0x";
+        if (!hasBytecode) {
+          setError(
+            "That's a regular wallet, not your Polymarket account. Your account is a smart contract that polymarket.com creates for you — copy that address from polymarket.com → profile → builder settings.",
+          );
+          return;
+        }
+      }
+
+      // Step 2: reverse-owner check (server-side, gated on POLYGONSCAN_API_KEY).
+      // Fails open when the API key isn't configured on this deployment.
+      const ownerLookup = await findProxyOwners(trimmed);
+      if (ownerLookup.available && ownerLookup.owners.length > 0) {
+        const eoaLc = eoa.toLowerCase();
+        const isOwner = ownerLookup.owners.some(
+          (o) => o.toLowerCase() === eoaLc,
+        );
+        if (!isOwner) {
+          setError(
+            "This Polymarket account doesn't belong to your connected wallet. Either switch to the wallet you sign Polymarket trades with, or paste the account that wallet owns.",
+          );
+          return;
+        }
+      }
+    } catch {
+      // Either check failed (flaky network / RPC). Better to let the user
+      // save than to block them on infrastructure noise.
+    } finally {
+      setVerifying(false);
+    }
+
     writeFunderAddress(eoa, trimmed as `0x${string}`);
     onSaved(trimmed as `0x${string}`);
   }
 
-  return (
+  // Portal to <body> to escape the TopNav <header>'s containing block —
+  // its `backdrop-filter: blur(...)` scopes `position: fixed` to the header,
+  // which would mash the dialog into the 49px sticky-nav strip.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -325,20 +391,25 @@ export function DepositWalletDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-muted hover:bg-surface-2 hover:text-foreground"
+            disabled={verifying}
+            className="rounded-md border border-border-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-muted hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={save}
-            disabled={!isValid}
+            disabled={!isValid || verifying}
             className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/15 px-3 py-1.5 text-[13px] font-semibold text-accent hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Save & start trading
+            {verifying ? (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+            ) : null}
+            {verifying ? "Verifying…" : "Save & start trading"}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
