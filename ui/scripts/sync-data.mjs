@@ -13,11 +13,29 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileS
 import path from "node:path";
 
 const SRC = path.resolve(process.cwd(), "..", "data", "enriched-markets.json");
+const SRC_META = path.resolve(process.cwd(), "..", "data", "snapshot-meta.json");
 const DST_DIR = path.resolve(process.cwd(), "data");
 const DST = path.resolve(DST_DIR, "enriched-markets.json");
 const META = path.resolve(DST_DIR, "snapshot-meta.json");
 
-function writeMeta(snapshotMtimeMs) {
+/** Resolve the authoritative snapshot timestamp. Prefers the sidecar meta
+ *  written by enrich_state.py (pipeline-run time, never wrong), falls back
+ *  to the source file's mtime. */
+function resolveSnapshotAt(fallbackMtimeMs) {
+  if (existsSync(SRC_META)) {
+    try {
+      const m = JSON.parse(readFileSync(SRC_META, "utf-8"));
+      if (m.snapshotAt && !Number.isNaN(Date.parse(m.snapshotAt))) {
+        return m.snapshotAt;
+      }
+    } catch {
+      // malformed source meta; fall through to mtime
+    }
+  }
+  return new Date(fallbackMtimeMs).toISOString();
+}
+
+function writeMeta(snapshotAtIso) {
   writeFileSync(
     META,
     JSON.stringify(
@@ -25,7 +43,7 @@ function writeMeta(snapshotMtimeMs) {
         // ISO timestamp of when the SOURCE snapshot was generated. This is
         // what /api/health checks against. Build time is recorded separately
         // so we can tell "stale source data" from "stale build".
-        snapshotAt: new Date(snapshotMtimeMs).toISOString(),
+        snapshotAt: snapshotAtIso,
         syncedAt: new Date().toISOString(),
       },
       null,
@@ -39,7 +57,7 @@ if (!existsSync(SRC)) {
     if (!existsSync(META)) {
       // Bootstrap meta from the destination file's mtime if we somehow have
       // the data file but no sidecar (e.g. first deploy after this change).
-      writeMeta(statSync(DST).mtimeMs);
+      writeMeta(resolveSnapshotAt(statSync(DST).mtimeMs));
     }
     const meta = JSON.parse(readFileSync(META, "utf-8"));
     const age =
@@ -58,8 +76,10 @@ if (!existsSync(SRC)) {
 mkdirSync(DST_DIR, { recursive: true });
 const srcMtimeMs = statSync(SRC).mtimeMs;
 copyFileSync(SRC, DST);
-writeMeta(srcMtimeMs);
+const snapshotAt = resolveSnapshotAt(srcMtimeMs);
+writeMeta(snapshotAt);
 const bytes = statSync(DST).size;
+const source = existsSync(SRC_META) ? "pipeline meta" : "source mtime";
 console.log(
-  `[sync-data] copied ${(bytes / 1024 / 1024).toFixed(2)} MB to ./data/enriched-markets.json (source mtime ${new Date(srcMtimeMs).toISOString()})`,
+  `[sync-data] copied ${(bytes / 1024 / 1024).toFixed(2)} MB to ./data/enriched-markets.json (snapshotAt=${snapshotAt} via ${source})`,
 );

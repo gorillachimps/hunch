@@ -14,6 +14,7 @@ Output: data/enriched-markets.json
 
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +22,12 @@ import requests
 
 IN = Path(__file__).parent / "data" / "parsed-markets.json"
 OUT = Path(__file__).parent / "data" / "enriched-markets.json"
+# Sidecar meta: when this pipeline run actually generated the snapshot.
+# Authoritative source for the "Snapshot N min ago" indicator the UI shows.
+# Previously the UI inferred this from the file's mtime, but mtime is
+# unreliable after deploy systems (Vercel, Docker layers) normalise file
+# attrs through the build pipeline.
+OUT_META = Path(__file__).parent / "data" / "snapshot-meta.json"
 
 BINANCE = "https://api.binance.com/api/v3/ticker/price"
 # CryptoCompare is the fallback when Binance is geo-blocked. GitHub Actions
@@ -245,8 +252,17 @@ def main() -> None:
 
     OUT.write_text(json.dumps(enriched, separators=(",", ":")))
 
+    # Pipeline-time meta. The sync script ships this sidecar to ui/data/
+    # alongside the data file so the UI doesn't have to guess at the
+    # snapshot's age from file mtimes (which deploy systems mangle).
+    snapshot_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    OUT_META.write_text(
+        json.dumps({"snapshotAt": snapshot_at}, indent=2) + "\n"
+    )
+
     print(f"\nWrote {OUT}")
     print(f"  rows: {len(enriched)}  size: {OUT.stat().st_size/1024/1024:.2f} MB")
+    print(f"  meta: snapshotAt={snapshot_at}")
     print()
     print(f"{'family:state':<40}{'count':>8}")
     print("-" * 48)
